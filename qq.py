@@ -230,7 +230,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else: await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     d = q.data
     uid = q.from_user.id
