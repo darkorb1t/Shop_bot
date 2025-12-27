@@ -240,8 +240,9 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     conn = get_db_connection()
     c = conn.cursor()
 
-    if d == 'menu_0': # Shop
-        c.execute("SELECT name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access' GROUP BY name")
+    if d == 'menu_0': # Shop Fix for Postgres
+        # FIXED: GROUP BY removed, used DISTINCT ON for Postgres
+        c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
         prods = c.fetchall()
         
         if not prods:
@@ -264,7 +265,7 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
         await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown')
     elif d == 'menu_2': 
         await q.message.reply_text(t['ask_money'])
-        conn.close() # Close if open, though ekhane open hoyni logic onujayi, safety r jonne
+        conn.close()
         return INPUT_MONEY
     elif d == 'menu_3': 
         await q.message.reply_text(t['coupon_ask'])
@@ -275,8 +276,9 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif d == 'menu_5': 
         await q.message.reply_text(t['support'].format(ADMIN_USERNAME))
     
-    conn.close() # Final close
+    conn.close()
     return MAIN_STATE
+    
   
 
 # --- BUY LOGIC ---
@@ -397,20 +399,19 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     conn = get_db_connection()
     c = conn.cursor()
     
-    # NAVIGATION
     if d == 'adm_back':
         conn.close()
         return await admin_start(update, context)
 
     if d == 'adm_add':
-        await q.message.reply_text("📝 **Add Product (Bulk)**\n`Type | Name | Desc | CustPrice | ResPrice | Content`\n\nTypes: `file`, `account`, `access`", parse_mode='Markdown')
+        await q.message.reply_text("📝 **Add Product**\nFormat: `Type|Name|Desc|CustP|ResP|Content`", parse_mode='Markdown')
         conn.close()
         return INPUT_ADMIN_PROD
         
     elif d == 'adm_res':
         res, pas = ''.join(random.choices(string.digits,k=10)), ''.join(random.choices(string.digits,k=8))
-        # FIXED: ? -> %s
-        c.execute("INSERT INTO resellers VALUES (%s,%s)", (res, pas))
+        # FIXED: Explicit column names added
+        c.execute("INSERT INTO resellers (res_id, password) VALUES (%s,%s)", (res, pas))
         conn.commit()
         await q.message.edit_text(f"✅ **Reseller Created**\nID: `{res}`\nPass: `{pas}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
         conn.close()
@@ -426,6 +427,7 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
         return MAIN_STATE
         
     elif d == 'adm_stock':
+        # FIXED: Added explicit grouping for Postgres compatibility
         c.execute("SELECT name, COUNT(*) FROM products WHERE status='unsold' GROUP BY name")
         rows = c.fetchall()
         msg = "📦 **Stock Report:**\n" + "\n".join([f"- {r[0]}: {r[1]}" for r in rows])
@@ -440,8 +442,8 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             msg = "📈 **Recent Sales:**\n\n"
             for r in rows:
-                date_short = str(r[2]).split('.')[0]
-                msg += f"▫️ {r[0]} - {r[1]} Tk ({date_short})\n"
+                date_str = str(r[2]).split('.')[0]
+                msg += f"▫️ {r[0]} - {r[1]} Tk ({date_str})\n"
         
         await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
         conn.close()
@@ -459,8 +461,9 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     
     conn.close()
     return MAIN_STATE
+                
+
     
-  
 
 # --- ADMIN ACTIONS ---
 async def admin_save_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
