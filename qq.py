@@ -398,17 +398,19 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     conn = get_db_connection()
     c = conn.cursor()
     
+    # NAVIGATION
     if d == 'adm_back':
         conn.close()
         return await admin_start(update, context)
 
     if d == 'adm_add':
-        await q.message.reply_text("📝 **Add Product**\nFormat: `Type|Name|Desc|CustP|ResP|Content`", parse_mode='Markdown')
+        await q.message.reply_text("📝 **Add Product (Bulk)**\n`Type | Name | Desc | CustPrice | ResPrice | Content`\n\nTypes: `file`, `account`, `access`", parse_mode='Markdown')
         conn.close()
         return INPUT_ADMIN_PROD
         
     elif d == 'adm_res':
         res, pas = ''.join(random.choices(string.digits,k=10)), ''.join(random.choices(string.digits,k=8))
+        # FIXED: ? -> %s
         c.execute("INSERT INTO resellers VALUES (%s,%s)", (res, pas))
         conn.commit()
         await q.message.edit_text(f"✅ **Reseller Created**\nID: `{res}`\nPass: `{pas}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
@@ -433,15 +435,14 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
         return MAIN_STATE
         
     elif d == 'adm_sales':
-        # FIX: date column name check koro (tomar db te 'date' ache kina, postgres e 'date' keyword, tai conflict hote pare, tobe select e somossa nai)
         c.execute("SELECT product_name, price, date FROM sales ORDER BY id DESC LIMIT 10")
         rows = c.fetchall()
         if not rows: msg = "📉 **No Sales Yet**"
         else:
             msg = "📈 **Recent Sales:**\n\n"
             for r in rows:
-                date_str = str(r[2]).split('.')[0] # Timestamp fix
-                msg += f"▫️ {r[0]} - {r[1]} Tk ({date_str})\n"
+                date_short = str(r[2]).split('.')[0]
+                msg += f"▫️ {r[0]} - {r[1]} Tk ({date_short})\n"
         
         await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
         conn.close()
@@ -459,30 +460,49 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     
     conn.close()
     return MAIN_STATE
+    
   
 
 # --- ADMIN ACTIONS ---
 async def admin_save_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = update.message.text.split('\n')
+    
+    conn = get_db_connection() # Added Connection
+    c = conn.cursor()
+    
     count = 0
     for line in lines:
         try:
             p = [x.strip() for x in line.split('|')]
-            c.execute("INSERT INTO products (type,name,description,price_cust,price_res,content) VALUES (?,?,?,?,?,?)", (p[0],p[1],p[2],int(p[3]),int(p[4]),p[5]))
+            # FIXED: ? -> %s
+            c.execute("INSERT INTO products (type,name,description,price_cust,price_res,content) VALUES (%s,%s,%s,%s,%s,%s)", (p[0],p[1],p[2],int(p[3]),int(p[4]),p[5]))
             count+=1
         except: pass
     conn.commit()
+    conn.close() # Close Connection
+    
     await update.message.reply_text(f"✅ Added {count} items.")
     return await admin_start(update, context)
-
+    
 async def admin_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.callback_query.data.split('_')[1]
-    c.execute("DELETE FROM products WHERE name=?", (name,))
+    
+    conn = get_db_connection() # Added Connection
+    c = conn.cursor()
+    
+    # FIXED: ? -> %s
+    c.execute("DELETE FROM products WHERE name=%s", (name,))
     conn.commit()
+    conn.close()
+    
     await update.callback_query.message.edit_text(f"🗑 Deleted: {name}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]))
     return MAIN_STATE
+                               
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db_connection() # Added Connection
+    c = conn.cursor()
+    
     c.execute("SELECT user_id FROM users")
     count = 0
     for u in c.fetchall():
@@ -490,34 +510,55 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(u[0], update.message.text)
             count+=1
         except: pass
+    
+    conn.close()
     await update.message.reply_text(f"✅ Sent to {count}.")
     return await admin_start(update, context)
+            
 
 async def admin_save_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         p = [x.strip() for x in update.message.text.split('|')]
-        c.execute("INSERT INTO coupons VALUES (?,?,?,0)", (p[0], int(p[1]), int(p[2])))
+        
+        conn = get_db_connection() # Added Connection
+        c = conn.cursor()
+        
+        # FIXED: ? -> %s
+        c.execute("INSERT INTO coupons VALUES (%s,%s,%s,0)", (p[0], int(p[1]), int(p[2])))
         conn.commit()
+        conn.close()
+        
         await update.message.reply_text("✅ Coupon Created!")
     except: await update.message.reply_text("Error.")
     return await admin_start(update, context)
+        
 
 async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = update.callback_query.data
+    
+    conn = get_db_connection() # Added Connection
+    c = conn.cursor()
+    
     if d.startswith('ok'):
         _, u, a = d.split('_')
-        c.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (int(a), int(u)))
+        # FIXED: ? -> %s
+        c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (int(a), int(u)))
         conn.commit()
         await context.bot.send_message(int(u), f"🎉 Balance Added: {a} Tk")
         await update.callback_query.edit_message_text(f"✅ Approved {a} Tk")
+        
     elif d.startswith('g'):
         _, u, p, a = d.split('_')
-        c.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (int(a), int(u)))
+        # FIXED: ? -> %s
+        c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (int(a), int(u)))
         conn.commit()
         await context.bot.send_message(int(u), "✅ Access Granted! Check Email.")
         await update.callback_query.edit_message_text("✅ Granted.")
+        
     else: await update.callback_query.edit_message_text("❌ Rejected.")
-
+    
+    conn.close() # Close Connection
+    
 # --- MAIN ---
 def main():
     init_db()     # ডাটাবেস তৈরি করবে
