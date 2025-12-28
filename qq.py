@@ -523,7 +523,7 @@ async def admin_save_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
             count+=1
         except: pass
     conn.commit()
-    conn.close() # Close Connection
+    db_pool.putconn(conn) # <-- Fixed (Connection returned to pool)
     
     await update.message.reply_text(f"✅ Added {count} items.")
     return await admin_start(update, context)
@@ -537,7 +537,7 @@ async def admin_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     # FIXED: ? -> %s
     c.execute("DELETE FROM products WHERE name=%s", (name,))
     conn.commit()
-    conn.close()
+    db_pool.putconn(conn) # <-- Fixed
     
     await update.callback_query.message.edit_text(f"🗑 Deleted: {name}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]))
     return MAIN_STATE
@@ -555,7 +555,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             count+=1
         except: pass
     
-    conn.close()
+    db_pool.putconn(conn) # <-- Fixed
     await update.message.reply_text(f"✅ Sent to {count}.")
     return await admin_start(update, context)
             
@@ -570,7 +570,7 @@ async def admin_save_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # FIXED: ? -> %s
         c.execute("INSERT INTO coupons VALUES (%s,%s,%s,0)", (p[0], int(p[1]), int(p[2])))
         conn.commit()
-        conn.close()
+        db_pool.putconn(conn) # <-- Fixed
         
         await update.message.reply_text("✅ Coupon Created!")
     except: await update.message.reply_text("Error.")
@@ -601,26 +601,33 @@ async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYP
         
     else: await update.callback_query.edit_message_text("❌ Rejected.")
     
-    conn.close() # Close Connection
-    
+    db_pool.putconn(conn) # <-- Fixed
+        
 # --- MAIN ---
 def main():
-    init_db()     # ডাটাবেস তৈরি করবে
-    keep_alive()  # ফেক সার্ভার চালাবে
+    init_db()     # ডাটাবেস এবং টেবিল তৈরি করবে (Fix করা init_db)
+    keep_alive()  # ফেক সার্ভার চালাবে (24/7 এর জন্য)
     
-    # ... বাকি কোড যেমন আছে তেমনই থাকবে ...
-  
+    # অ্যাপ্লিকেশন বিল্ডার
     app = Application.builder().token(TOKEN).build()
+    
+    # হ্যান্ডলার ডিফাইন করা
     menu_h = CallbackQueryHandler(universal_menu_handler, pattern='^menu_')
     admin_h = CallbackQueryHandler(universal_admin_handler, pattern='^adm_')
     
+    # কনভারসেশন হ্যান্ডলার সেটআপ
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             SELECT_LANG: [CallbackQueryHandler(lang_choice, pattern='^lang_')],
             SELECT_ROLE: [CallbackQueryHandler(ask_role_screen, pattern='^back_'), CallbackQueryHandler(role_handler, pattern='^role_')],
             RESELLER_INPUT: [MessageHandler(filters.TEXT, reseller_input)],
-            MAIN_STATE: [menu_h, admin_h, CallbackQueryHandler(buy_handler, pattern='^buy_'), CallbackQueryHandler(admin_delete_confirm, pattern='^del_')],
+            MAIN_STATE: [
+                menu_h, 
+                admin_h, 
+                CallbackQueryHandler(buy_handler, pattern='^buy_'), 
+                CallbackQueryHandler(admin_delete_confirm, pattern='^del_')
+            ],
             INPUT_MONEY: [MessageHandler(filters.TEXT, input_money), menu_h, admin_h],
             INPUT_TRX: [MessageHandler(filters.TEXT, input_trx), menu_h, admin_h],
             INPUT_EMAIL: [MessageHandler(filters.TEXT, input_email), menu_h, admin_h],
@@ -631,10 +638,15 @@ def main():
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('admin', admin_start)]
     )
+    
     app.add_handler(conv)
+    
+    # অ্যাডমিন যখন টাকা বা একসেস অ্যাপ্রুভ করবে, তার হ্যান্ডলার (কনভারসেশনের বাইরে)
     app.add_handler(CallbackQueryHandler(admin_deposit_access, pattern='^(ok|no|g|f)_'))
+    
     print("Bot Running...")
     app.run_polling()
 
 if __name__ == '__main__':
     main()
+    
