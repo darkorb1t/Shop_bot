@@ -321,6 +321,9 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     name = q.data.split('_')[1]
     uid = q.from_user.id
+    username = q.from_user.username
+    u_tag = f"@{username}" if username else "No Username"
+    
     user = get_user(uid)
     lang = user[2]
     t = TEXTS[lang]
@@ -331,7 +334,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item = c.fetchone()
     
     if not item: 
-        db_pool.putconn(conn) # <-- Fixed
+        db_pool.putconn(conn)
         return await q.answer("❌ Stock Ended!", show_alert=True)
     
     pid, ptype, pc, pr, content = item
@@ -340,30 +343,34 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_price = int(base_price - (base_price * discount / 100))
     
     if user[4] < final_price: 
-        db_pool.putconn(conn) # <-- Fixed
+        db_pool.putconn(conn)
         return await q.answer(t['insufficient'].format(final_price - user[4]), show_alert=True)
         
     if ptype == 'access':
+        # Access type e sales record ekhon hobe na, admin grant korle hobe
         context.user_data['buy_data'] = (pid, final_price, name)
         await q.message.reply_text(t['ask_email'])
-        db_pool.putconn(conn) # <-- Fixed
+        db_pool.putconn(conn)
         return INPUT_EMAIL
     
     if ptype == 'account':
         c.execute("UPDATE products SET status='sold' WHERE id=%s", (pid,))
         
+    # Instant Purchase Logic
     c.execute("UPDATE users SET balance = balance - %s WHERE user_id=%s", (final_price, uid))
     c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (uid, name, final_price))
     conn.commit()
-    db_pool.putconn(conn) # <-- Fixed
+    db_pool.putconn(conn)
     
     if 'disc' in context.user_data: del context.user_data['disc']
-    await context.bot.send_message(ADMIN_ID, f"📢 Sold: {name} to {uid}")
-    await q.message.reply_text(t['bought'].format(name, content), parse_mode='Markdown') 
     
-    # মেনু আবার দেখানোর জন্য
+    # --- FIX FOR ISSUE 2 ---
+    await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Instant):** {name}\n👤 Buyer: {u_tag} (`{uid}`)")
+    
+    await q.message.reply_text(t['bought'].format(name, content), parse_mode='Markdown') 
     await show_main_menu(update, context)
     return MAIN_STATE
+  
     
 # --- INPUTS ---
 async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
