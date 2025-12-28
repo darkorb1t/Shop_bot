@@ -397,10 +397,19 @@ async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     email = update.message.text
     pid, cost, name = context.user_data['buy_data']
     uid = update.effective_user.id
+    username = update.effective_user.username
+    u_tag = f"@{username}" if username else "No Username"
+    
+    # Callback data te username pass kora possible na (limit thake), tai pore fetch korbo
     kb = [[InlineKeyboardButton("✅ Grant", callback_data=f"g_{uid}_{pid}_{cost}"), InlineKeyboardButton("❌ Reject", callback_data=f"f_{uid}")]]
-    await context.bot.send_message(ADMIN_ID, f"⚠️ **Access Req**\nUser: {uid}\nItem: {name}\nEmail: `{email}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    
+    # --- FIX FOR ISSUE 4 ---
+    msg = f"⚠️ **Access Req**\n👤 User: {u_tag}\n🆔 ID: `{uid}`\n📦 Item: {name}\n📧 Email: `{email}`"
+    
+    await context.bot.send_message(ADMIN_ID, msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     await update.message.reply_text(TEXTS[get_user(uid)[2]]['email_sent'])
     return MAIN_STATE
+  
 
 async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     code = update.message.text
@@ -586,29 +595,52 @@ async def admin_save_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
     d = update.callback_query.data
-    
-    conn = get_db_connection() # Added Connection
+    conn = get_db_connection()
     c = conn.cursor()
     
     if d.startswith('ok'):
-        _, u, a = d.split('_')
-        # FIXED: ? -> %s
-        c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (int(a), int(u)))
+        _, u_str, a_str = d.split('_')
+        u, a = int(u_str), int(a_str)
+        c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (a, u))
         conn.commit()
-        await context.bot.send_message(int(u), f"🎉 Balance Added: {a} Tk")
+        await context.bot.send_message(u, f"🎉 Balance Added: {a} Tk")
         await update.callback_query.edit_message_text(f"✅ Approved {a} Tk")
         
     elif d.startswith('g'):
-        _, u, p, a = d.split('_')
-        # FIXED: ? -> %s
-        c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (int(a), int(u)))
-        conn.commit()
-        await context.bot.send_message(int(u), "✅ Access Granted! Check Email.")
-        await update.callback_query.edit_message_text("✅ Granted.")
+        _, u_str, pid_str, cost_str = d.split('_')
+        u, pid, cost = int(u_str), int(pid_str), int(cost_str)
         
-    else: await update.callback_query.edit_message_text("❌ Rejected.")
+        # 1. Balance kete neya
+        c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (cost, u))
+        
+        # 2. Product name ber kora (Sales table er jonno)
+        c.execute("SELECT name FROM products WHERE id=%s", (pid,))
+        p_res = c.fetchone()
+        p_name = p_res[0] if p_res else "Unknown Item"
+        
+        # 3. --- FIX FOR ISSUE 3 (Sales Table Update) ---
+        c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (u, p_name, cost))
+        conn.commit()
+        
+        # 4. User info ber kora (Username er jonno)
+        try:
+            chat_info = await context.bot.get_chat(u)
+            username = f"@{chat_info.username}" if chat_info.username else "No Username"
+        except:
+            username = "Unknown"
+
+        # 5. --- FIX FOR ISSUE 1 (Admin Notification) ---
+        await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Access Granted):** {p_name}\n👤 Sold to: {username} (`{u}`)")
+        
+        await context.bot.send_message(u, f"✅ **Approved!**\n📦 Item: {p_name}\nআপনার ইমেইল অথবা ইনবক্স চেক করুন।")
+        await update.callback_query.edit_message_text(f"✅ Granted: {p_name} to {username}")
+        
+    else: 
+        # Reject logic
+        await update.callback_query.edit_message_text("❌ Rejected.")
     
-    db_pool.putconn(conn) # <-- Fixed
+    db_pool.putconn(conn)
+      
         
 # --- MAIN ---
 def main():
