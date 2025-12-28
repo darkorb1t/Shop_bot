@@ -131,11 +131,18 @@ def create_user(user):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     create_user(user)
-    print(f"USER_ID: {user.id}") # Copy for Admin
     
+    # অটো-লগইন চেক (রিসেলার হলে সরাসরি মেনু)
+    db_user = get_user(user.id)
+    if db_user and db_user[3] == 'reseller':
+        await update.message.reply_text(f"👋 Welcome back Boss, **{user.first_name}**!", parse_mode='Markdown')
+        await show_main_menu(update, context)
+        return MAIN_STATE
+
     kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
     await update.message.reply_text("Please select your language / ভাষা নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(kb))
     return SELECT_LANG
+    
 
 async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -246,10 +253,57 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     c = conn.cursor()
 
     try:
-        # --- 1. BACK TO MENU LOGIC ---
+        # --- Back Button Logic ---
         if d == 'menu_back':
             await show_main_menu(update, context)
             return MAIN_STATE
+
+        if d == 'menu_0': # Shop
+            c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
+            prods = c.fetchall()
+            
+            if not prods:
+                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+                await q.message.reply_text(t['shop_empty'], reply_markup=InlineKeyboardMarkup(kb_back))
+            else:
+                await q.message.reply_text("🛒 **SHOP ITEMS:**", parse_mode='Markdown')
+                for p in prods:
+                    name, desc, pc, pr, ptype = p
+                    price = pr if user[3] == 'reseller' else pc
+                    kb = [[InlineKeyboardButton(t['buy_btn'].format(price), callback_data=f"buy_{name}")]]
+                    await context.bot.send_message(uid, f"📦 **{name}**\n📄 {desc}\n💰 Price: {price} Tk", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                
+                # Shop এর শেষে Back Button
+                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+                await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
+            return MAIN_STATE
+            
+        elif d == 'menu_1': 
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
+            
+        elif d == 'menu_2': 
+            await q.message.reply_text(t['ask_money'])
+            db_pool.putconn(conn)
+            return INPUT_MONEY
+        elif d == 'menu_3': 
+            await q.message.reply_text(t['coupon_ask'])
+            db_pool.putconn(conn)
+            return INPUT_COUPON
+        elif d == 'menu_4': 
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await q.message.reply_text(f"🤝 Refer Link:\n`https://t.me/{context.bot.username}?start=ref_{uid}`\nBonus: 1 Tk", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
+        elif d == 'menu_5': 
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await q.message.reply_text(t['support'].format(ADMIN_USERNAME), reply_markup=InlineKeyboardMarkup(kb_back))
+    
+    except Exception as e:
+        print(f"Menu Error: {e}")
+    finally:
+        db_pool.putconn(conn) # কানেকশন ফেরত দেওয়া
+    
+    return MAIN_STATE
+    
 
         # --- 2. SHOP HANDLER ---
         if d == 'menu_0': 
