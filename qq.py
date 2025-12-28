@@ -56,7 +56,8 @@ def init_db():
     # Coupons
     c.execute('''CREATE TABLE IF NOT EXISTS coupons (code TEXT, percent INTEGER, limit_count INTEGER, used_count INTEGER DEFAULT 0)''')
     conn.commit()
-    conn.close()
+    db_pool.putconn(conn)  # <-- Fixed
+    
   
 
 # --- TEXTS ---
@@ -115,7 +116,7 @@ def get_user(uid):
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
     res = c.fetchone()
-    conn.close()
+    db_pool.putconn(conn) # <-- Fixed
     return res
 
 def create_user(user):
@@ -124,7 +125,8 @@ def create_user(user):
         c = conn.cursor()
         c.execute("INSERT INTO users (user_id, first_name, lang, role) VALUES (%s, %s, 'BN', 'customer')", (user.id, user.first_name))
         conn.commit()
-        conn.close()
+        db_pool.putconn(conn) # <-- Fixed
+        
       
 
 # --- START & LANG ---
@@ -153,9 +155,10 @@ async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c = conn.cursor()
     c.execute("UPDATE users SET lang=%s WHERE user_id=%s", (lang, q.from_user.id))
     conn.commit()
-    conn.close()
+    db_pool.putconn(conn)  # <-- Fixed
     
     return await ask_role_screen(update, context, lang)
+    
 
 # --- ROLE & LOGIN ---
 async def ask_role_screen(update: Update, context, lang):
@@ -180,7 +183,7 @@ async def role_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c = conn.cursor()
         c.execute("UPDATE users SET role='customer' WHERE user_id=%s", (uid,))
         conn.commit()
-        conn.close()
+        db_pool.putconn(conn)  # <-- Fixed
         await show_main_menu(update, context)
         return MAIN_STATE
         
@@ -207,12 +210,12 @@ async def reseller_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data['awaiting_pass']
             await update.message.reply_text("✅ Login Successful! Welcome Boss.")
             await show_main_menu(update, context)
-            conn.close()
+            db_pool.putconn(conn)  # <-- Fixed
             return MAIN_STATE
         else:
             del context.user_data['awaiting_pass']
             await update.message.reply_text("❌ Login Failed! Try again.") # Simplified text
-            conn.close()
+            db_pool.putconn(conn)  # <-- Fixed
             # Ekhane abar role screen e pathano jete pare ba input e
             return await start(update, context) 
 
@@ -221,13 +224,13 @@ async def reseller_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['temp_rid'] = text
         context.user_data['awaiting_pass'] = True
         await update.message.reply_text("🔑 Enter Password:")
-        conn.close()
+        db_pool.putconn(conn)  # <-- Fixed
         return RESELLER_INPUT
     else:
         await update.message.reply_text("❌ Invalid ID.")
-        conn.close()
+        db_pool.putconn(conn)  # <-- Fixed
         return await start(update, context)
-      
+        
 
 # --- MENU & NAVIGATION ---
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,7 +261,9 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
             await show_main_menu(update, context)
             return MAIN_STATE
 
-        if d == 'menu_0': # Shop
+        # --- Shop Handler ---
+        if d == 'menu_0': 
+            # Postgres Fix: DISTINCT ON
             c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
             prods = c.fetchall()
             
@@ -278,91 +283,38 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
                 await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
             return MAIN_STATE
             
+        # --- Other Menu Items ---
         elif d == 'menu_1': 
             kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
             await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
             
         elif d == 'menu_2': 
             await q.message.reply_text(t['ask_money'])
-            db_pool.putconn(conn)
+            # finally ব্লক অটোমেটিক কানেকশন ক্লোজ করবে
             return INPUT_MONEY
+
         elif d == 'menu_3': 
             await q.message.reply_text(t['coupon_ask'])
-            db_pool.putconn(conn)
             return INPUT_COUPON
+
         elif d == 'menu_4': 
             kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
             await q.message.reply_text(f"🤝 Refer Link:\n`https://t.me/{context.bot.username}?start=ref_{uid}`\nBonus: 1 Tk", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
+            
         elif d == 'menu_5': 
             kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
             await q.message.reply_text(t['support'].format(ADMIN_USERNAME), reply_markup=InlineKeyboardMarkup(kb_back))
     
     except Exception as e:
         print(f"Menu Error: {e}")
+        await q.message.reply_text("⚠️ Something went wrong!")
+        
     finally:
-        db_pool.putconn(conn) # কানেকশন ফেরত দেওয়া
+        db_pool.putconn(conn) # <--- এটাই আসল ফিক্স (Connection Pool এ ফেরত যাবে)
     
     return MAIN_STATE
-    
-
-        # --- 2. SHOP HANDLER ---
-        if d == 'menu_0': 
-            # Postgres Fix: GROUP BY removed, used DISTINCT ON
-            c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
-            prods = c.fetchall()
             
-            if not prods:
-                await q.message.reply_text(t['shop_empty'])
-                # খালি থাকলেও ব্যাক বাটন দেওয়া ভালো
-                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-                await context.bot.send_message(uid, "নিচের বাটনে চাপ দিয়ে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
-            else:
-                await q.message.reply_text("🛒 **SHOP ITEMS:**", parse_mode='Markdown')
-                for p in prods:
-                    name, desc, pc, pr, ptype = p
-                    price = pr if user[3] == 'reseller' else pc
-                    
-                    txt = f"📦 **{name}**\n\n📄 {desc}\n💰 Price: {price} Tk"
-                    kb = [[InlineKeyboardButton(t['buy_btn'].format(price), callback_data=f"buy_{name}")]]
-                    await context.bot.send_message(uid, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-                
-                # Shop এর শেষে Back Button পাঠানো
-                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-                await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
-
-            return MAIN_STATE
-            
-        # --- 3. OTHER MENU ITEMS ---
-        elif d == 'menu_1': 
-            await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown')
-            # প্রোফাইল দেখার পরও মেনুতে ফেরার বাটন দেওয়া হলো
-            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
-            
-        elif d == 'menu_2': 
-            await q.message.reply_text(t['ask_money'])
-            return INPUT_MONEY
-        elif d == 'menu_3': 
-            await q.message.reply_text(t['coupon_ask'])
-            return INPUT_COUPON
-        elif d == 'menu_4': 
-            await q.message.reply_text(f"🤝 Refer Link:\n`https://t.me/{context.bot.username}?start=ref_{uid}`\nBonus: 1 Tk", parse_mode='Markdown')
-            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
-            
-        elif d == 'menu_5': 
-            await q.message.reply_text(t['support'].format(ADMIN_USERNAME))
-            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
-    
-    except Exception as e:
-        print(f"Menu Error: {e}")
-    finally:
-        conn.close() # যদি Pool সেটআপ করে থাকেন তবে এখানে db_pool.putconn(conn) দিবেন
-    
-    return MAIN_STATE
-                    
-
+ 
 
 # --- BUY LOGIC ---
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -379,7 +331,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item = c.fetchone()
     
     if not item: 
-        conn.close()
+        db_pool.putconn(conn) # <-- Fixed
         return await q.answer("❌ Stock Ended!", show_alert=True)
     
     pid, ptype, pc, pr, content = item
@@ -388,13 +340,13 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     final_price = int(base_price - (base_price * discount / 100))
     
     if user[4] < final_price: 
-        conn.close()
+        db_pool.putconn(conn) # <-- Fixed
         return await q.answer(t['insufficient'].format(final_price - user[4]), show_alert=True)
         
     if ptype == 'access':
         context.user_data['buy_data'] = (pid, final_price, name)
         await q.message.reply_text(t['ask_email'])
-        conn.close()
+        db_pool.putconn(conn) # <-- Fixed
         return INPUT_EMAIL
     
     if ptype == 'account':
@@ -403,13 +355,15 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("UPDATE users SET balance = balance - %s WHERE user_id=%s", (final_price, uid))
     c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (uid, name, final_price))
     conn.commit()
-    conn.close()
+    db_pool.putconn(conn) # <-- Fixed
     
     if 'disc' in context.user_data: del context.user_data['disc']
     await context.bot.send_message(ADMIN_ID, f"📢 Sold: {name} to {uid}")
     await q.message.reply_text(t['bought'].format(name, content), parse_mode='Markdown') 
-        # মেনু আবার দেখানোর জন্য
-    await show_main_menu(update, context) 
+    
+    # মেনু আবার দেখানোর জন্য
+    await show_main_menu(update, context)
+    return MAIN_STATE
     
 # --- INPUTS ---
 async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -459,9 +413,9 @@ async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else: 
         await update.message.reply_text("❌ Invalid or Expired Coupon!")
     
-    conn.close()
+    db_pool.putconn(conn) # <-- Fixed
     return MAIN_STATE
-  
+    
 
 # --- UNIVERSAL ADMIN PANEL ---
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -547,7 +501,7 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
         await q.message.reply_text(f"⚠️ Error: {e}")
         
     finally:
-        conn.close() # সবশেষে কানেকশন বন্ধ করবেই
+        db_pool.putconn(conn) # <-- Fixed (সবশেষে কানেকশন ফেরত যাবে)
         
     return MAIN_STATE
             
