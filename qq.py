@@ -1,6 +1,8 @@
 import logging
 import psycopg2
 import threading
+import random
+import string
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
@@ -399,71 +401,74 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     conn = get_db_connection()
     c = conn.cursor()
     
-    if d == 'adm_back':
-        conn.close()
-        return await admin_start(update, context)
+    try:
+        # NAVIGATION
+        if d == 'adm_back':
+            return await admin_start(update, context)
 
-    if d == 'adm_add':
-        await q.message.reply_text("📝 **Add Product**\nFormat: `Type|Name|Desc|CustP|ResP|Content`", parse_mode='Markdown')
-        conn.close()
-        return INPUT_ADMIN_PROD
+        if d == 'adm_add':
+            await q.message.reply_text("📝 **Add Product (Bulk)**\nFormat: `Type|Name|Desc|CustP|ResP|Content`\n\nTypes: `file`, `account`, `access`", parse_mode='Markdown')
+            return INPUT_ADMIN_PROD
+            
+        elif d == 'adm_res':
+            # Reseller ID & Pass Generation
+            res = ''.join(random.choices(string.digits, k=10))
+            pas = ''.join(random.choices(string.digits, k=8))
+            
+            c.execute("INSERT INTO resellers (res_id, password) VALUES (%s, %s)", (res, pas))
+            conn.commit()
+            
+            await q.message.edit_text(f"✅ **Reseller Created**\n🆔 ID: `{res}`\n🔑 Pass: `{pas}`", 
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), 
+                                      parse_mode='Markdown')
+            return MAIN_STATE
+            
+        elif d == 'adm_del':
+            c.execute("SELECT DISTINCT name FROM products")
+            names = c.fetchall()
+            kb = [[InlineKeyboardButton(f"❌ {n[0]}", callback_data=f"del_{n[0]}")] for n in names]
+            kb.append([InlineKeyboardButton("🔙 Back", callback_data='adm_back')])
+            await q.message.edit_text("Select Product to DELETE:", reply_markup=InlineKeyboardMarkup(kb))
+            return MAIN_STATE
+            
+        elif d == 'adm_stock':
+            c.execute("SELECT name, COUNT(*) FROM products WHERE status='unsold' GROUP BY name")
+            rows = c.fetchall()
+            msg = "📦 **Stock Report:**\n" + "\n".join([f"- {r[0]}: {r[1]}" for r in rows])
+            await q.message.edit_text(msg if rows else "Empty Stock", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
+            return MAIN_STATE
+            
+        elif d == 'adm_sales':
+            c.execute("SELECT product_name, price, date FROM sales ORDER BY id DESC LIMIT 10")
+            rows = c.fetchall()
+            if not rows: msg = "📉 **No Sales Yet**"
+            else:
+                msg = "📈 **Recent Sales:**\n\n"
+                for r in rows:
+                    date_short = str(r[2]).split('.')[0]
+                    msg += f"▫️ {r[0]} - {r[1]} Tk ({date_short})\n"
+            
+            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
+            return MAIN_STATE
+            
+        elif d == 'adm_cast':
+            await q.message.reply_text("📢 Enter Message to Broadcast:")
+            return INPUT_BROADCAST
+            
+        elif d == 'adm_coup':
+            await q.message.reply_text("🎟 Enter: `CODE | Percent | Limit`", parse_mode='Markdown')
+            return INPUT_ADMIN_COUPON
+            
+    except Exception as e:
+        print(f"Error in Admin Handler: {e}") # কনসোলে এরর দেখাবে
+        await q.message.reply_text(f"⚠️ Error: {e}")
         
-    elif d == 'adm_res':
-        res, pas = ''.join(random.choices(string.digits,k=10)), ''.join(random.choices(string.digits,k=8))
-        # FIXED: Explicit column names added
-        c.execute("INSERT INTO resellers (res_id, password) VALUES (%s,%s)", (res, pas))
-        conn.commit()
-        await q.message.edit_text(f"✅ **Reseller Created**\nID: `{res}`\nPass: `{pas}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
-        conn.close()
-        return MAIN_STATE
+    finally:
+        conn.close() # সবশেষে কানেকশন বন্ধ করবেই
         
-    elif d == 'adm_del':
-        c.execute("SELECT DISTINCT name FROM products")
-        names = c.fetchall()
-        kb = [[InlineKeyboardButton(f"❌ {n[0]}", callback_data=f"del_{n[0]}")] for n in names]
-        kb.append([InlineKeyboardButton("🔙 Back", callback_data='adm_back')])
-        await q.message.edit_text("Select Product to DELETE:", reply_markup=InlineKeyboardMarkup(kb))
-        conn.close()
-        return MAIN_STATE
-        
-    elif d == 'adm_stock':
-        # FIXED: Added explicit grouping for Postgres compatibility
-        c.execute("SELECT name, COUNT(*) FROM products WHERE status='unsold' GROUP BY name")
-        rows = c.fetchall()
-        msg = "📦 **Stock Report:**\n" + "\n".join([f"- {r[0]}: {r[1]}" for r in rows])
-        await q.message.edit_text(msg if rows else "Empty", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
-        conn.close()
-        return MAIN_STATE
-        
-    elif d == 'adm_sales':
-        c.execute("SELECT product_name, price, date FROM sales ORDER BY id DESC LIMIT 10")
-        rows = c.fetchall()
-        if not rows: msg = "📉 **No Sales Yet**"
-        else:
-            msg = "📈 **Recent Sales:**\n\n"
-            for r in rows:
-                date_str = str(r[2]).split('.')[0]
-                msg += f"▫️ {r[0]} - {r[1]} Tk ({date_str})\n"
-        
-        await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
-        conn.close()
-        return MAIN_STATE
-        
-    elif d == 'adm_cast':
-        await q.message.reply_text("📢 Enter Message to Broadcast:")
-        conn.close()
-        return INPUT_BROADCAST
-        
-    elif d == 'adm_coup':
-        await q.message.reply_text("🎟 Enter: `CODE | Percent | Limit`", parse_mode='Markdown')
-        conn.close()
-        return INPUT_ADMIN_COUPON
-    
-    conn.close()
     return MAIN_STATE
+            
                 
-
-    
 
 # --- ADMIN ACTIONS ---
 async def admin_save_prod(update: Update, context: ContextTypes.DEFAULT_TYPE):
