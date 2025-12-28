@@ -1,5 +1,6 @@
 import logging
 import psycopg2
+from psycopg2 import pool
 import threading
 import random
 import string
@@ -14,6 +15,8 @@ ADMIN_USERNAME = "darkorb1t"
 BKASH_NUMBER = "01611026722"
 # Neon.tech Database URL (আপনার URL এখানে বসান)
 NEON_DB_URL = "postgres://user:password@ep-xyz.aws.neon.tech/neondb?sslmode=require"
+# Create a connection pool (Min 1, Max 20 connections)
+db_pool = psycopg2.pool.SimpleConnectionPool(1, 20, NEON_DB_URL)
 
 # --- FAKE SERVER (For 24/7) ---
 app = Flask(__name__)
@@ -37,8 +40,8 @@ def keep_alive():
 
 # --- DATABASE ---
 def get_db_connection():
-    return psycopg2.connect(NEON_DB_URL)
-
+    return db_pool.getconn()
+    
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
@@ -242,46 +245,70 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     conn = get_db_connection()
     c = conn.cursor()
 
-    if d == 'menu_0': # Shop Fix for Postgres
-        # FIXED: GROUP BY removed, used DISTINCT ON for Postgres
-        c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
-        prods = c.fetchall()
-        
-        if not prods:
-            await q.message.reply_text(t['shop_empty'])
-            conn.close()
+    try:
+        # --- 1. BACK TO MENU LOGIC ---
+        if d == 'menu_back':
+            await show_main_menu(update, context)
+            return MAIN_STATE
+
+        # --- 2. SHOP HANDLER ---
+        if d == 'menu_0': 
+            # Postgres Fix: GROUP BY removed, used DISTINCT ON
+            c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
+            prods = c.fetchall()
+            
+            if not prods:
+                await q.message.reply_text(t['shop_empty'])
+                # খালি থাকলেও ব্যাক বাটন দেওয়া ভালো
+                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+                await context.bot.send_message(uid, "নিচের বাটনে চাপ দিয়ে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
+            else:
+                await q.message.reply_text("🛒 **SHOP ITEMS:**", parse_mode='Markdown')
+                for p in prods:
+                    name, desc, pc, pr, ptype = p
+                    price = pr if user[3] == 'reseller' else pc
+                    
+                    txt = f"📦 **{name}**\n\n📄 {desc}\n💰 Price: {price} Tk"
+                    kb = [[InlineKeyboardButton(t['buy_btn'].format(price), callback_data=f"buy_{name}")]]
+                    await context.bot.send_message(uid, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                
+                # Shop এর শেষে Back Button পাঠানো
+                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+                await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
+
             return MAIN_STATE
             
-        await q.message.reply_text("🛒 **SHOP ITEMS:**", parse_mode='Markdown')
-        for p in prods:
-            name, desc, pc, pr, ptype = p
-            price = pr if user[3] == 'reseller' else pc
+        # --- 3. OTHER MENU ITEMS ---
+        elif d == 'menu_1': 
+            await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown')
+            # প্রোফাইল দেখার পরও মেনুতে ফেরার বাটন দেওয়া হলো
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
             
-            txt = f"📦 **{name}**\n\n📄 {desc}\n💰 Price: {price} Tk"
-            kb = [[InlineKeyboardButton(t['buy_btn'].format(price), callback_data=f"buy_{name}")]]
-            await context.bot.send_message(uid, txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-        conn.close()
-        return MAIN_STATE
-        
-    elif d == 'menu_1': 
-        await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown')
-    elif d == 'menu_2': 
-        await q.message.reply_text(t['ask_money'])
-        conn.close()
-        return INPUT_MONEY
-    elif d == 'menu_3': 
-        await q.message.reply_text(t['coupon_ask'])
-        conn.close()
-        return INPUT_COUPON
-    elif d == 'menu_4': 
-        await q.message.reply_text(f"🤝 Refer Link:\n`https://t.me/{context.bot.username}?start=ref_{uid}`\nBonus: 1 Tk", parse_mode='Markdown')
-    elif d == 'menu_5': 
-        await q.message.reply_text(t['support'].format(ADMIN_USERNAME))
+        elif d == 'menu_2': 
+            await q.message.reply_text(t['ask_money'])
+            return INPUT_MONEY
+        elif d == 'menu_3': 
+            await q.message.reply_text(t['coupon_ask'])
+            return INPUT_COUPON
+        elif d == 'menu_4': 
+            await q.message.reply_text(f"🤝 Refer Link:\n`https://t.me/{context.bot.username}?start=ref_{uid}`\nBonus: 1 Tk", parse_mode='Markdown')
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
+            
+        elif d == 'menu_5': 
+            await q.message.reply_text(t['support'].format(ADMIN_USERNAME))
+            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+            await context.bot.send_message(uid, "মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
     
-    conn.close()
+    except Exception as e:
+        print(f"Menu Error: {e}")
+    finally:
+        conn.close() # যদি Pool সেটআপ করে থাকেন তবে এখানে db_pool.putconn(conn) দিবেন
+    
     return MAIN_STATE
-    
-  
+                    
+
 
 # --- BUY LOGIC ---
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,7 +354,9 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'disc' in context.user_data: del context.user_data['disc']
     await context.bot.send_message(ADMIN_ID, f"📢 Sold: {name} to {uid}")
     await q.message.reply_text(t['bought'].format(name, content), parse_mode='Markdown') 
-  
+        # মেনু আবার দেখানোর জন্য
+    await show_main_menu(update, context) 
+    
 # --- INPUTS ---
 async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
