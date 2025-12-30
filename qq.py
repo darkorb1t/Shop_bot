@@ -246,6 +246,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    await q.answer()
     d = q.data
     uid = q.from_user.id
     user = get_user(uid)
@@ -319,6 +320,7 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
 # --- BUY LOGIC ---
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    await q.answer()
     name = q.data.split('_')[1]
     uid = q.from_user.id
     username = q.from_user.username
