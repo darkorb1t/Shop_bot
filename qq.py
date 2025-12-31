@@ -144,27 +144,60 @@ TEXTS = {
 # --- HELPERS ---
 def get_user(uid):
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
-    res = c.fetchone()
-    db_pool.putconn(conn) # <-- Fixed
-    return res
-
+    try:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
+        res = c.fetchone()
+        return res
+    except psycopg2.OperationalError:
+        # প্রথমবার ফেইল করলে কানেকশন রিসেট করে আবার চেষ্টা করবে
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
+        res = c.fetchone()
+        return res
+    finally:
+        try:
+            db_pool.putconn(conn)
+        except:
+            pass
+          
 def create_user(user):
-    if not get_user(user.id):
+    # আগে চেক করি ইউজার আছে কিনা
+    if get_user(user.id):
+        return
+
+    conn = get_db_connection()
+    try:
+        c = conn.cursor()
+        c.execute("INSERT INTO users (user_id, first_name, lang, role) VALUES (%s, %s, 'BN', 'customer')", (user.id, user.first_name))
+        conn.commit()
+    except psycopg2.OperationalError:
+        # ইনসার্ট ফেইল করলে আবার চেষ্টা
         conn = get_db_connection()
         c = conn.cursor()
         c.execute("INSERT INTO users (user_id, first_name, lang, role) VALUES (%s, %s, 'BN', 'customer')", (user.id, user.first_name))
         conn.commit()
-        db_pool.putconn(conn) # <-- Fixed
-        
+    finally:
+        try:
+            db_pool.putconn(conn)
+        except:
+            pass
+          
       
 
 # --- START & LANG ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    create_user(user)
     
+    # এটি এখন নিরাপদ, এরর হলেও কোড থামবে না
+    try:
+        create_user(user)
+    except Exception as e:
+        print(f"DB Login Error: {e}") 
+    
+    # ... বাকি কোড যেমন ছিল তেমনই থাকবে (Auto-login check ইত্যাদি) ...
+    # ...
     # অটো-লগইন চেক (রিসেলার হলে সরাসরি মেনু)
     db_user = get_user(user.id)
     if db_user and db_user[3] == 'reseller':
