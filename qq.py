@@ -40,14 +40,44 @@ def keep_alive():
 
 # --- DATABASE ---
 def get_db_connection():
-    return db_pool.getconn()
+    try:
+        # পুল থেকে কানেকশন নেওয়া
+        conn = db_pool.getconn()
+        
+        # কানেকশন তাজা আছে কিনা চেক করা (Health Check)
+        if conn.closed:
+            db_pool.putconn(conn, close=True) # মরা কানেকশন ফেলে দেওয়া
+            return db_pool.getconn() # নতুন কানেকশন নেওয়া
+            
+        # ডাবল চেক: সার্ভার কি কানেকশন কেটে দিয়েছে?
+        with conn.cursor() as c:
+            c.execute("SELECT 1") # পিং করা
+            
+        return conn
+        
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        # যদি কোনো কারণে কানেকশন মরে গিয়ে থাকে, জোর করে নতুন কানেকশন তৈরি করা
+        try:
+            return psycopg2.connect(NEON_DB_URL)
+        except:
+            # একদমই উপায় না থাকলে আবার পুল ট্রাই করা
+            return db_pool.getconn()
+            
     
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
+    # Check connection health
+    try:
+        c.execute("SELECT 1")
+    except psycopg2.OperationalError:
+        # If connection died, get a new one
+        conn = get_db_connection()
+        c = conn.cursor()
+        
     # Users
     c.execute('''CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, first_name TEXT, lang TEXT, role TEXT, balance INTEGER DEFAULT 0)''')
-    # Products (Postgres uses SERIAL instead of AUTOINCREMENT)
+    # Products
     c.execute('''CREATE TABLE IF NOT EXISTS products (id SERIAL PRIMARY KEY, type TEXT, name TEXT, description TEXT, price_cust INTEGER, price_res INTEGER, content TEXT, status TEXT DEFAULT 'unsold')''')
     # Resellers
     c.execute('''CREATE TABLE IF NOT EXISTS resellers (res_id TEXT, password TEXT)''')
@@ -56,7 +86,8 @@ def init_db():
     # Coupons
     c.execute('''CREATE TABLE IF NOT EXISTS coupons (code TEXT, percent INTEGER, limit_count INTEGER, used_count INTEGER DEFAULT 0)''')
     conn.commit()
-    db_pool.putconn(conn)  # <-- Fixed
+    db_pool.putconn(conn)
+    
     
   
 
