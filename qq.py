@@ -7,6 +7,7 @@ import string
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram.request import HTTPXRequest 
 
 # --- CONFIGURATION ---
 TOKEN = '8036869041:AAHiFgQ7dQUjjkGt6W-OwZQ5MXFMM8SeWzM'   # টোকেন বসাও
@@ -710,17 +711,19 @@ async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYP
         
 # --- MAIN ---
 def main():
-    init_db()     # ডাটাবেস এবং টেবিল তৈরি করবে (Fix করা init_db)
-    keep_alive()  # ফেক সার্ভার চালাবে (24/7 এর জন্য)
+    init_db()
+    keep_alive()
     
-    # অ্যাপ্লিকেশন বিল্ডার
-    app = Application.builder().token(TOKEN).build()
+    # কানেকশন টাইমআউট বাড়ানো হলো (৬০ সেকেন্ড)
+    req = HTTPXRequest(connect_timeout=60, read_timeout=60)
     
-    # হ্যান্ডলার ডিফাইন করা
+    # অ্যাপ বিল্ডার আপডেট করা হলো
+    app = Application.builder().token(TOKEN).request(req).build()
+    
+    # --- HANDLERS ---
     menu_h = CallbackQueryHandler(universal_menu_handler, pattern='^menu_')
     admin_h = CallbackQueryHandler(universal_admin_handler, pattern='^adm_')
     
-    # কনভারসেশন হ্যান্ডলার সেটআপ
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -745,11 +748,9 @@ def main():
     )
     
     app.add_handler(conv)
-    
-    # অ্যাডমিন যখন টাকা বা একসেস অ্যাপ্রুভ করবে, তার হ্যান্ডলার (কনভারসেশনের বাইরে)
     app.add_handler(CallbackQueryHandler(admin_deposit_access, pattern='^(ok|no|g|f)_'))
     
-    print("Bot Running...")
+    print("Bot Running... (Press Ctrl+C to stop)")
     app.run_polling()
 
 if __name__ == '__main__':
