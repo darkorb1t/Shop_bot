@@ -702,11 +702,21 @@ async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(u, f"✅ **Approved!**\n📦 Item: {p_name}\nআপনার ইমেইল অথবা ইনবক্স চেক করুন।")
         await update.callback_query.edit_message_text(f"✅ Granted: {p_name} to {username}")
         
-    else: 
-        # Reject logic
+        else: 
+        # রিজেক্ট লজিক (Reject Logic)
+        try:
+            # বাটন থেকে ইউজার আইডি বের করা (Format: no_USERID)
+            target_user_id = int(d.split('_')[1])
+            
+            # ইউজারকে মেসেজ পাঠানো
+            await context.bot.send_message(target_user_id, "❌ আপনার ডিপোজিট রিকোয়েস্টটি বাতিল (Reject) করা হয়েছে।")
+        except:
+            pass
+            
         await update.callback_query.edit_message_text("❌ Rejected.")
     
-    db_pool.putconn(conn)
+    db_pool.putconn(conn) # এটা যেমন ছিল তেমনই থাকবে
+        
       
         
 # --- MAIN ---
