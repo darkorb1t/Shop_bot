@@ -221,7 +221,6 @@ async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # ভাষা বের করা (lang_EN -> EN, lang_BN -> BN)
     lang_code = query.data.split('_')[1] 
     user_id = query.from_user.id
 
@@ -232,14 +231,16 @@ async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     db_pool.putconn(conn)
 
-    # কনফার্মেশন মেসেজ এবং মেনু দেখানো
+    # কনফার্মেশন মেসেজ
     if lang_code == 'EN':
         await query.edit_message_text("✅ Language set to **English**!", parse_mode='Markdown')
     else:
         await query.edit_message_text("✅ ভাষা **বাংলা** সিলেক্ট করা হয়েছে!", parse_mode='Markdown')
         
-    await show_main_menu(update, context)
-    return MAIN_STATE
+    # --- পরিবর্তন: মেনুর বদলে এখন রোল সিলেক্ট করতে বলবে ---
+    await ask_role_screen(update, context)
+    return SELECT_ROLE
+    
     
     
 
@@ -575,91 +576,154 @@ async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- UNIVERSAL ADMIN PANEL ---
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
     kb = [
-        [InlineKeyboardButton("📦 Stock", callback_data='adm_stock'), InlineKeyboardButton("📈 Sales", callback_data='adm_sales')],
-        [InlineKeyboardButton("📢 Cast", callback_data='adm_cast'), InlineKeyboardButton("➕ Add Prod", callback_data='adm_add')],
-        [InlineKeyboardButton("🎟 Coupon", callback_data='adm_coup'), InlineKeyboardButton("🗑 Delete", callback_data='adm_del')],
-        [InlineKeyboardButton("🆔 Reseller Gen", callback_data='adm_res')]
+        # সারি ১: স্টক এবং সেলস রিপোর্ট
+        [InlineKeyboardButton("📦 Stock Report", callback_data='adm_stock'), InlineKeyboardButton("📈 Sales Report", callback_data='adm_sales')],
+        # সারি ২: প্রোডাক্ট অ্যাড এবং ডিলিট
+        [InlineKeyboardButton("➕ Add Product", callback_data='adm_add'), InlineKeyboardButton("❌ Delete Product", callback_data='adm_del')],
+        # সারি ৩: ইউজার ব্যালেন্স এবং রিসেলার লিস্ট (নতুন)
+        [InlineKeyboardButton("👥 Users & Balance", callback_data='adm_users'), InlineKeyboardButton("🔐 Reseller List", callback_data='adm_res_list')],
+        # সারি ৪: রিসেলার তৈরি এবং কুপন
+        [InlineKeyboardButton("➕ Add Reseller", callback_data='adm_add_res'), InlineKeyboardButton("🎟 Add Coupon", callback_data='adm_coupon')],
+        # সারি ৫: ব্রডকাস্ট এবং ব্যাক
+        [InlineKeyboardButton("📢 Broadcast", callback_data='adm_cast')],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='menu_main')]
     ]
-    msg = "👮 **Admin Panel**\nSelect option:"
-    if update.callback_query: await update.callback_query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    else: await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    
+    # মেসেজ এডিট অথবা সেন্ড (সেফটি সহ - যাতে ক্র্যাশ না করে)
+    try:
+        if update.callback_query:
+            await update.callback_query.edit_message_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        else:
+            await update.message.reply_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    except:
+        # যদি এডিট করতে না পারে, নতুন করে পাঠাবে
+        await update.effective_message.reply_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        
     return MAIN_STATE
+    
 
 async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
+    await q.answer() # বাটন লোডিং বন্ধ করতে
     d = q.data
     
     conn = get_db_connection()
     c = conn.cursor()
     
     try:
-        # NAVIGATION
-        if d == 'adm_back':
-            return await admin_start(update, context)
+        # --- ১. ব্যাক বাটন ---
+        if d == 'adm_back' or d == 'adm_panel':
+            await admin_panel(update, context)
+            return MAIN_STATE
 
-        if d == 'adm_add':
+        # --- ২. প্রোডাক্ট অ্যাড ---
+        elif d == 'adm_add':
             await q.message.reply_text("📝 **Add Product (Bulk)**\nFormat: `Type|Name|Desc|CustP|ResP|Content`\n\nTypes: `file`, `account`, `access`", parse_mode='Markdown')
             return INPUT_ADMIN_PROD
             
-        elif d == 'adm_res':
-            # Reseller ID & Pass Generation
-            res = ''.join(random.choices(string.digits, k=10))
+        # --- ৩. রিসেলার তৈরি (Add Reseller) ---
+        elif d == 'adm_add_res':
+            # অটোমেটিক আইডি পাসওয়ার্ড জেনারেট
+            res_id = ''.join(random.choices(string.digits, k=10))
             pas = ''.join(random.choices(string.digits, k=8))
             
-            c.execute("INSERT INTO resellers (res_id, password) VALUES (%s, %s)", (res, pas))
+            c.execute("INSERT INTO resellers (res_id, password) VALUES (%s, %s)", (res_id, pas))
             conn.commit()
             
-            await q.message.edit_text(f"✅ **Reseller Created**\n🆔 ID: `{res}`\n🔑 Pass: `{pas}`", 
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), 
+            # ব্যাক বাটন সহ রেজাল্ট দেখানো
+            kb_back = [[InlineKeyboardButton("🔙 Back to Panel", callback_data='adm_panel')]]
+            await q.message.edit_text(f"✅ **New Reseller Created**\n\n🆔 ID: `{res_id}`\n🔑 Pass: `{pas}`", 
+                                      reply_markup=InlineKeyboardMarkup(kb_back), 
                                       parse_mode='Markdown')
-            return MAIN_STATE
             
+        # --- ৪. রিসেলার লিস্ট দেখা (নতুন) ---
+        elif d == 'adm_res_list':
+            c.execute("SELECT res_id, password FROM resellers")
+            resellers = c.fetchall()
+            
+            if not resellers:
+                msg = "❌ No Resellers found."
+            else:
+                msg = "🔐 **All Resellers List:**\n\n"
+                for r in resellers:
+                    msg += f"👤 ID: `{r[0]}` | 🔑 Pass: `{r[1]}`\n"
+            
+            kb_back = [[InlineKeyboardButton("🔙 Back to Panel", callback_data='adm_panel')]]
+            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb_back), parse_mode='Markdown')
+
+        # --- ৫. ইউজার ব্যালেন্স দেখা (নতুন) ---
+        elif d == 'adm_users':
+            # টপ ৫০ জন ইউজার যাদের ব্যালেন্স আছে
+            c.execute("SELECT user_id, first_name, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT 50")
+            users = c.fetchall()
+            
+            if not users:
+                msg = "👥 **User Balances:**\nNo users with balance found."
+            else:
+                msg = "👥 **User Balances (Top 50):**\n\n"
+                for u in users:
+                    msg += f"🆔 `{u[0]}` | 👤 {u[1]} | 💰 {u[2]} Tk\n"
+            
+            msg += "\n⚠️ **To Remove Balance:**\nUse: `/cut user_id amount`\nExample: `/cut 123456 100`"
+            
+            kb_back = [[InlineKeyboardButton("🔙 Back to Panel", callback_data='adm_panel')]]
+            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb_back), parse_mode='Markdown')
+
+        # --- ৬. প্রোডাক্ট ডিলিট ---
         elif d == 'adm_del':
             c.execute("SELECT DISTINCT name FROM products")
             names = c.fetchall()
-            kb = [[InlineKeyboardButton(f"❌ {n[0]}", callback_data=f"del_{n[0]}")] for n in names]
-            kb.append([InlineKeyboardButton("🔙 Back", callback_data='adm_back')])
-            await q.message.edit_text("Select Product to DELETE:", reply_markup=InlineKeyboardMarkup(kb))
-            return MAIN_STATE
+            if not names:
+                await q.message.edit_text("❌ No products to delete.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_panel')]]))
+            else:
+                # ডিলিট বাটন লিস্ট তৈরি
+                kb = [[InlineKeyboardButton(f"❌ {n[0]}", callback_data=f"del_{n[0]}")] for n in names]
+                kb.append([InlineKeyboardButton("🔙 Back to Panel", callback_data='adm_panel')])
+                await q.message.edit_text("👇 Select Product to DELETE:", reply_markup=InlineKeyboardMarkup(kb))
             
+        # --- ৭. স্টক রিপোর্ট ---
         elif d == 'adm_stock':
             c.execute("SELECT name, COUNT(*) FROM products WHERE status='unsold' GROUP BY name")
             rows = c.fetchall()
-            msg = "📦 **Stock Report:**\n" + "\n".join([f"- {r[0]}: {r[1]}" for r in rows])
-            await q.message.edit_text(msg if rows else "Empty Stock", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
-            return MAIN_STATE
+            msg = "📦 **Current Stock:**\n\n" + "\n".join([f"▫️ {r[0]}: {r[1]} pcs" for r in rows])
+            if not rows: msg = "📦 **Stock is Empty!**"
             
+            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_panel')]]), parse_mode='Markdown')
+            
+        # --- ৮. সেলস রিপোর্ট ---
         elif d == 'adm_sales':
-            c.execute("SELECT product_name, price, date FROM sales ORDER BY id DESC LIMIT 10")
+            c.execute("SELECT product_name, price, date FROM sales ORDER BY id DESC LIMIT 15")
             rows = c.fetchall()
-            if not rows: msg = "📉 **No Sales Yet**"
+            if not rows: 
+                msg = "📉 **No Sales Yet**"
             else:
-                msg = "📈 **Recent Sales:**\n\n"
+                msg = "📈 **Recent Sales (Last 15):**\n\n"
                 for r in rows:
                     date_short = str(r[2]).split('.')[0]
-                    msg += f"▫️ {r[0]} - {r[1]} Tk ({date_short})\n"
+                    msg += f"▫️ {r[0]} - {r[1]} Tk \n   `{date_short}`\n"
             
-            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_back')]]), parse_mode='Markdown')
-            return MAIN_STATE
+            await q.message.edit_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data='adm_panel')]]), parse_mode='Markdown')
             
+        # --- ৯. ব্রডকাস্ট ---
         elif d == 'adm_cast':
             await q.message.reply_text("📢 Enter Message to Broadcast:")
             return INPUT_BROADCAST
             
-        elif d == 'adm_coup':
-            await q.message.reply_text("🎟 Enter: `CODE | Percent | Limit`", parse_mode='Markdown')
+        # --- ১০. কুপন ---
+        elif d == 'adm_coupon' or d == 'adm_coup':
+            await q.message.reply_text("🎟 Enter Coupon Details:\nFormat: `CODE | Percent | Limit`", parse_mode='Markdown')
             return INPUT_ADMIN_COUPON
             
     except Exception as e:
-        print(f"Error in Admin Handler: {e}") # কনসোলে এরর দেখাবে
+        print(f"Error in Admin Handler: {e}") 
         await q.message.reply_text(f"⚠️ Error: {e}")
         
     finally:
-        db_pool.putconn(conn) # <-- Fixed (সবশেষে কানেকশন ফেরত যাবে)
+        db_pool.putconn(conn) # কানেকশন সেফলি ফেরত যাবে
         
     return MAIN_STATE
+    
             
                 
 
@@ -714,7 +778,56 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db_pool.putconn(conn) # <-- Fixed
     await update.message.reply_text(f"✅ Sent to {count}.")
     return await admin_start(update, context)
-            
+
+# কমান্ড: /cut user_id amount
+async def cut_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    
+    # সিকিউরিটি চেক: শুধু এডমিন এই কমান্ড দিতে পারবে
+    if user.id != ADMIN_ID: 
+        return 
+    
+    try:
+        # কমান্ড থেকে ডাটা নেওয়া (যেমন: /cut 123456 100)
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text("⚠️ Format error! Use: `/cut user_id amount`")
+            return
+
+        target_id = int(args[0])
+        amount = int(args[1])
+        
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # ১. ব্যালেন্স চেক করা (যে মাইনাস হবে কিনা)
+        c.execute("SELECT balance FROM users WHERE user_id=%s", (target_id,))
+        res = c.fetchone()
+        
+        if not res:
+            await update.message.reply_text("❌ User not found!")
+            db_pool.putconn(conn)
+            return
+
+        current_balance = res[0]
+        new_balance = current_balance - amount
+        
+        # ২. ব্যালেন্স আপডেট করা
+        c.execute("UPDATE users SET balance = %s WHERE user_id = %s", (new_balance, target_id))
+        conn.commit()
+        db_pool.putconn(conn)
+        
+        await update.message.reply_text(f"✅ Cut **{amount} Tk** from User `{target_id}`.\n💰 New Balance: {new_balance} Tk", parse_mode='Markdown')
+        
+        # ৩. ইউজারকে নোটিশ দেওয়া (অপশনাল)
+        try:
+            await context.bot.send_message(target_id, f"⚠️ Admin removed {amount} Tk from your balance.\n💰 Current Balance: {new_balance} Tk")
+        except:
+            pass
+        
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error: {e}")
+    
 
 async def admin_save_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -829,6 +942,8 @@ def main():
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('admin', admin_start)]
     )
+    # ব্যালেন্স কাটার কমান্ড হ্যান্ডলার
+    app.add_handler(CommandHandler("cut", cut_balance))
     
     app.add_handler(conv)
     app.add_handler(CallbackQueryHandler(admin_deposit_access, pattern='^(ok|no|g|f)_'))
