@@ -320,53 +320,56 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db_user = get_user(user.id)
     
-    # ডাটাবেস থেকে তথ্য নেওয়া
-    lang = db_user[2] if db_user else 'BN' # ভাষা (BN/EN)
+    lang = db_user[2] if db_user else 'BN'
     role = db_user[3] if db_user else 'customer'
     balance = db_user[4] if db_user else 0
 
-    # --- ভাষার লজিক ---
+    # টেক্সট সাজানো
     if lang == 'EN':
-        # ইংরেজি টেক্সট
-        txt = f"🏠 **Main Menu**\n\n👤 User: {user.first_name}\n💰 Balance: {balance} BDT\n\nSelect an option below:"
-        btn_stock = "📦 Stock / Buy"
+        txt = f"🏠 **Main Menu**\n\n👤 User: {user.first_name}\n💰 Balance: {balance} BDT\n\nSelect an option:"
+        btn_stock = "📦 Stock"
         btn_profile = "👤 Profile"
         btn_deposit = "💰 Deposit"
+        btn_coupon = "🎟 Redeem Coupon"
+        btn_refer = "🤝 Refer & Earn"
         btn_support = "☎️ Support"
         btn_reseller = "🔐 Reseller Panel"
         btn_admin = "👑 Admin Panel"
     else:
-        # বাংলা টেক্সট (ডিফল্ট)
-        txt = f"🏠 **মেইন মেনু**\n\n👤 ইউজার: {user.first_name}\n💰 ব্যালেন্স: {balance} BDT\n\nনিচের অপশন থেকে সিলেক্ট করুন:"
+        txt = f"🏠 **মেইন মেনু**\n\n👤 ইউজার: {user.first_name}\n💰 ব্যালেন্স: {balance} BDT\n\nঅপশন সিলেক্ট করুন:"
         btn_stock = "📦 স্টক / কেনাকাটা"
         btn_profile = "👤 প্রোফাইল"
         btn_deposit = "💰 ডিপোজিট"
+        btn_coupon = "🎟 কুপন ব্যবহার"
+        btn_refer = "🤝 রেফার ও আর্ন"
         btn_support = "☎️ সাপোর্ট"
         btn_reseller = "🔐 রিসেলার প্যানেল"
         btn_admin = "👑 এডমিন প্যানেল"
 
-    # বাটন সাজানো
+    # বাটন সাজানো (Refer & Coupon সহ)
     kb = [
         [InlineKeyboardButton(btn_stock, callback_data='menu_stock'), InlineKeyboardButton(btn_profile, callback_data='menu_profile')],
-        [InlineKeyboardButton(btn_deposit, callback_data='menu_deposit'), InlineKeyboardButton(btn_support, callback_data='menu_support')]
+        [InlineKeyboardButton(btn_deposit, callback_data='menu_deposit'), InlineKeyboardButton(btn_coupon, callback_data='menu_coupon')],
+        [InlineKeyboardButton(btn_refer, callback_data='menu_refer'), InlineKeyboardButton(btn_support, callback_data='menu_support')]
     ]
 
-    # রিসেলার বা এডমিন বাটন
+    # রিসেলার হলে এক্সট্রা বাটন
     if role in ['reseller', 'admin']:
         kb.append([InlineKeyboardButton(btn_reseller, callback_data='menu_reseller_panel')])
 
+    # এডমিন হলে এক্সট্রা বাটন
     if role == 'admin' or user.id == ADMIN_ID:
         kb.append([InlineKeyboardButton(btn_admin, callback_data='adm_panel')])
 
-    # মেনু দেখানো
     if update.callback_query:
-        # আগের মেসেজ থাকলে এডিট করবে (try-except রাখা ভালো যদি মেসেজ অনেক পুরনো হয়)
+        # মেসেজ এডিট করার চেষ্টা, ফেইল করলে নতুন মেসেজ
         try:
             await update.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         except:
-            await update.callback_query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+             await update.callback_query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
         await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        
         
 
 async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,79 +378,90 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     d = q.data
     uid = q.from_user.id
     
-    # ইউজার এবং ভাষা লোড করা
     user = get_user(uid)
     lang = user[2]
-    t = TEXTS[lang] # আগের টেক্সট ডিকশনারি ব্যবহার করা হচ্ছে
+    t = TEXTS[lang]
     
     conn = get_db_connection()
     c = conn.cursor()
 
     try:
-        # --- 1. Back Button Logic (আগের মেনুতে ফেরা) ---
-        if d == 'menu_back' or d == 'menu_main':
+        # --- ১. ব্যাক টু স্টার্ট (রিসেলার বা কেউ রোল চেইঞ্জ করতে চাইলে) ---
+        if d == 'back_to_start':
+            kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
+            await q.message.reply_text("Please select your language / ভাষা নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(kb))
+            return SELECT_LANG
+
+        # --- ২. মেইন মেনুতে ফেরা ---
+        elif d == 'menu_back' or d == 'menu_main':
             await show_main_menu(update, context)
             return MAIN_STATE
 
-        # --- 2. Stock / Shop Handler (আগে যা menu_0 ছিল) ---
+        # --- ৩. স্টক / শপ ---
         elif d == 'menu_stock': 
-            # Postgres Fix: DISTINCT ON
             c.execute("SELECT DISTINCT ON (name) name, description, price_cust, price_res, type FROM products WHERE status='unsold' OR type='file' OR type='access'")
             prods = c.fetchall()
             
             if not prods:
-                kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+                kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="menu_back")]]
                 await q.message.reply_text(t['shop_empty'], reply_markup=InlineKeyboardMarkup(kb_back))
             else:
                 await q.message.reply_text("🛒 **SHOP ITEMS:**", parse_mode='Markdown')
                 for p in prods:
                     name, desc, pc, pr, ptype = p
-                    # প্রাইস লজিক: রিসেলার হলে কম দাম, কাস্টমার হলে বেশি দাম
                     price = pr if user[3] == 'reseller' else pc
-                    
                     kb = [[InlineKeyboardButton(t['buy_btn'].format(price), callback_data=f"buy_{name}")]]
                     await context.bot.send_message(uid, f"📦 **{name}**\n📄 {desc}\n💰 Price: {price} Tk", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
                 
-                # Shop এর শেষে Back Button
                 kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
                 await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
             return MAIN_STATE
-            
-        # --- 3. Profile Handler (আগে যা menu_1 ছিল) ---
-        elif d == 'menu_profile': 
-            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
-            # প্রোফাইল টেক্সট ফরম্যাট করা
+
+        # --- ৪. প্রোফাইল ---
+        elif d == 'menu_profile':
+            kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="menu_back")]]
             await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
-            
-        # --- 4. Deposit Handler (আগে যা menu_2 ছিল) ---
-        elif d == 'menu_deposit': 
+
+        # --- ৫. ডিপোজিট ---
+        elif d == 'menu_deposit':
             await q.message.reply_text(t['ask_money'])
             return INPUT_MONEY
 
-        # --- 5. Support Handler (আগে যা menu_5 ছিল) ---
-        elif d == 'menu_support': 
-            kb_back = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="menu_back")]]
+        # --- ৬. কুপন (Coupon) ---
+        elif d == 'menu_coupon':
+            await q.message.reply_text(t['coupon_ask'])
+            return INPUT_COUPON
+
+        # --- ৭. রেফার (Refer) ---
+        elif d == 'menu_refer':
+            kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="menu_back")]]
+            link = f"https://t.me/{context.bot.username}?start=ref_{uid}"
+            await q.message.reply_text(f"🤝 **Refer Link:**\n`{link}`\n\n🎁 Bonus: 1 Tk per refer!", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
+
+        # --- ৮. সাপোর্ট ---
+        elif d == 'menu_support':
+            kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="menu_back")]]
             await q.message.reply_text(t['support'].format(ADMIN_USERNAME), reply_markup=InlineKeyboardMarkup(kb_back))
 
-        # --- 6. Reseller Panel (নতুন যুক্ত করা হলো) ---
+        # --- ৯. রিসেলার প্যানেল ---
         elif d == 'menu_reseller_panel':
-            # রিসেলার প্যানেলের বাটন
             kb_res = [
-                [InlineKeyboardButton("➕ Add New Reseller", callback_data='adm_add_res')],
-                [InlineKeyboardButton("🔙 Back to Shop", callback_data='menu_back')]
+                [InlineKeyboardButton("➕ Add Reseller", callback_data='adm_add_res')],
+                [InlineKeyboardButton("🔙 Change Role/Language", callback_data='back_to_start')],
+                [InlineKeyboardButton("🏠 Back to Shop", callback_data='menu_main')]
             ]
-            await q.edit_message_text("🔐 **Reseller Panel**\n\nReseller Options:", reply_markup=InlineKeyboardMarkup(kb_res), parse_mode='Markdown')
+            await q.edit_message_text("🔐 **Reseller Panel**\n\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb_res), parse_mode='Markdown')
+            return MAIN_STATE
 
     except Exception as e:
         print(f"Menu Error: {e}")
         await q.message.reply_text("⚠️ Something went wrong!")
         
     finally:
-        # কানেকশন সবসময় ক্লোজ হবে (Pool এ ফেরত যাবে)
-        db_pool.putconn(conn) 
+        db_pool.putconn(conn)
     
     return MAIN_STATE
-    
+            
             
  
 
