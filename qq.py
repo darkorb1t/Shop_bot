@@ -324,7 +324,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role = db_user[3] if db_user else 'customer'
     balance = db_user[4] if db_user else 0
 
-    # টেক্সট এবং বাটন নাম
     if lang == 'EN':
         txt = f"🏠 **Main Menu**\n\n👤 User: {user.first_name}\n💰 Balance: {balance} BDT\n\nSelect an option:"
         btn_shop = "📦 Shop"
@@ -346,19 +345,17 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btn_reseller = "🔐 রিসেলার প্যানেল"
         btn_change = "🔄 ভাষা / রোল পরিবর্তন"
 
-    # বাটন সাজানো
     kb = [
         [InlineKeyboardButton(btn_shop, callback_data='menu_stock'), InlineKeyboardButton(btn_profile, callback_data='menu_profile')],
         [InlineKeyboardButton(btn_deposit, callback_data='menu_deposit'), InlineKeyboardButton(btn_coupon, callback_data='menu_coupon')],
         [InlineKeyboardButton(btn_refer, callback_data='menu_refer'), InlineKeyboardButton(btn_support, callback_data='menu_support')]
     ]
 
-    # রিসেলার বাটন
     if role in ['reseller', 'admin']:
         kb.append([InlineKeyboardButton(btn_reseller, callback_data='menu_reseller_panel')])
 
-    # --> এই বাটনটি সবার জন্য (Change Language/Role) <--
-    kb.append([InlineKeyboardButton(btn_change, callback_data='back_to_start')])
+    # ফিক্স: বাটনের আইডি 'menu_' দিয়ে শুরু হতে হবে
+    kb.append([InlineKeyboardButton(btn_change, callback_data='menu_reset')])
 
     if update.callback_query:
         try:
@@ -367,9 +364,9 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await update.callback_query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
         await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    
         
-
+        
+    
 async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -384,8 +381,8 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
     c = conn.cursor()
 
     try:
-        # --- ১. ভাষা/রোল পরিবর্তন বাটন লজিক ---
-        if d == 'back_to_start':
+        # --- ১. ভাষা/রোল পরিবর্তন (ফিক্সড আইডি: menu_reset) ---
+        if d == 'menu_reset':
             kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
             await q.message.reply_text("Please select your language / ভাষা নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(kb))
             return SELECT_LANG
@@ -395,11 +392,11 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
             await show_main_menu(update, context)
             return MAIN_STATE
 
-        # --- ৩. রিসেলার প্যানেল (এখানেও Change Role বাটন আছে) ---
+        # --- ৩. রিসেলার প্যানেল ---
         elif d == 'menu_reseller_panel':
             kb_res = [
-                # রিসেলারদের জন্য চেঞ্জ রোল বাটন
-                [InlineKeyboardButton("🔄 Change Language / Role", callback_data='back_to_start')],
+                # ফিক্স: এখানেও আইডি 'menu_reset' করা হলো
+                [InlineKeyboardButton("🔄 Change Language / Role", callback_data='menu_reset')],
                 [InlineKeyboardButton("🏠 Back to Shop", callback_data='menu_main')]
             ]
             await q.edit_message_text("🔐 **Reseller Panel**\n\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb_res), parse_mode='Markdown')
@@ -425,7 +422,7 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
                 await context.bot.send_message(uid, "👇 কেনাকাটা শেষ হলে মেনুতে ফিরে যান:", reply_markup=InlineKeyboardMarkup(kb_back))
             return MAIN_STATE
 
-        # --- ৫. অন্যান্য মেনু ---
+        # --- ৫. অন্যান্য বাটন ---
         elif d == 'menu_profile':
             kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="menu_back")]]
             await q.message.reply_text(t['profile'].format(user[1], uid, user[4], user[3]), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_back))
@@ -455,10 +452,8 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
         db_pool.putconn(conn)
     
     return MAIN_STATE
-                                                            
-            
-            
- 
+                                                                                                   
+                                                        
 
 # --- BUY LOGIC ---
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
