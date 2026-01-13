@@ -34,10 +34,21 @@ def keep_alive():
     t.start()
   
 # --- STATES ---
-(SELECT_LANG, SELECT_ROLE, RESELLER_INPUT, 
- MAIN_STATE, 
- INPUT_MONEY, INPUT_TRX, INPUT_EMAIL, INPUT_COUPON, 
- INPUT_ADMIN_PROD, INPUT_ADMIN_COUPON, INPUT_BROADCAST) = range(11)
+(
+    SELECT_LANG, 
+    SELECT_ROLE, 
+    INPUT_RES_LOGIN,  # নতুন (RESELLER_INPUT এর বদলে)
+    INPUT_RES_PASS,   # নতুন
+    MAIN_STATE, 
+    INPUT_MONEY, 
+    INPUT_TRX, 
+    INPUT_EMAIL, 
+    INPUT_COUPON, 
+    INPUT_ADMIN_PROD, 
+    INPUT_ADMIN_COUPON, 
+    INPUT_BROADCAST
+) = range(12) # আগে 11 ছিল, এখন 12 হবে
+
 
 # --- DATABASE ---
 def get_db_connection():
