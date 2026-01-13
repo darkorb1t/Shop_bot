@@ -970,81 +970,82 @@ async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYP
     c = conn.cursor()
     
     try:
-        # --- ১. ডিপোজিট অ্যাপ্রুভ (Deposit Approve) ---
-        if d.startswith('ok'):
-            # Format: ok_UserID_Amount (আপনার আগের ফরম্যাট)
-            _, u_str, a_str = d.split('_')
-            u, a = int(u_str), int(a_str)
+        # --- ১. প্রোডাক্ট অ্যাপ্রুভ (Access Grant) ---
+        # বাটন ফরম্যাট: g_UserID_PID_Price (যেমন: g_12345_5_100)
+        if d.startswith('g_'):
+            parts = d.split('_')
+            # parts[0]=g, parts[1]=uid, parts[2]=pid, parts[3]=price
+            u = int(parts[1])
+            pid = int(parts[2])
+            cost = int(parts[3])
+            
+            # ১. ব্যালেন্স কাটা
+            c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (cost, u))
+            
+            # ২. প্রোডাক্ট নাম ডাটাবেস থেকে বের করা (Item: None ফিক্স)
+            c.execute("SELECT name FROM products WHERE id=%s", (pid,))
+            res = c.fetchone()
+            p_name = res[0] if res else "Unknown Item"
+            
+            # ৩. সেলস টেবিলে রেকর্ড করা
+            c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (u, p_name, cost))
+            conn.commit()
+            
+            # ৪. ইউজারনেম বের করা (এডমিন লগের জন্য)
+            try:
+                chat = await context.bot.get_chat(u)
+                uname = f"@{chat.username}" if chat.username else "No Username"
+            except:
+                uname = "Unknown"
+            
+            # ৫. মেসেজ পাঠানো
+            # এডমিনকে লগ
+            await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Access Granted):** {p_name}\n👤 To: {uname} (`{u}`)\n💰 Price: {cost} Tk")
+            
+            # ইউজারকে ডেলিভারি মেসেজ
+            await context.bot.send_message(u, f"✅ **Order Approved!**\n📦 Item: **{p_name}**\n\nআপনার ইমেইল বা ইনবক্স চেক করুন, শীঘ্রই এক্সেস দেওয়া হবে।")
+            
+            # এডমিন প্যানেলের মেসেজ এডিট
+            await q.edit_message_text(f"✅ Granted: {p_name} to {uname}")
+
+        # --- ২. ডিপোজিট অ্যাপ্রুভ (Balance Add) ---
+        # বাটন ফরম্যাট: ok_dep_UserID_Amount
+        elif d.startswith('ok_dep_'):
+            parts = d.split('_')
+            u = int(parts[2])
+            a = int(parts[3])
             
             c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (a, u))
             conn.commit()
             
             await context.bot.send_message(u, f"🎉 **Deposit Successful!**\n💰 Added: {a} Tk")
-            await q.edit_message_text(f"✅ Approved {a} Tk for `{u}`")
-            
-        # --- ২. প্রোডাক্ট এক্সেস অ্যাপ্রুভ (Product Approve) ---
-        elif d.startswith('g'):
-            # Format: g_UserID_ProductID_Cost
-            _, u_str, pid_str, cost_str = d.split('_')
-            u, pid, cost = int(u_str), int(pid_str), int(cost_str)
-            
-            # ব্যালেন্স কাটা
-            c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (cost, u))
-            
-            # প্রোডাক্ট নাম বের করা
-            c.execute("SELECT name FROM products WHERE id=%s", (pid,))
-            p_res = c.fetchone()
-            p_name = p_res[0] if p_res else "Unknown Item"
-            
-            # সেলস টেবিলে আপডেট
-            c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (u, p_name, cost))
-            conn.commit()
-            
-            # ইউজারনেম বের করা (এডমিন নোটিফিকেশনের জন্য)
-            try:
-                chat_info = await context.bot.get_chat(u)
-                username = f"@{chat_info.username}" if chat_info.username else "No Username"
-            except:
-                username = "Unknown"
-
-            # এডমিন এবং ইউজারকে মেসেজ
-            await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Access Granted):** {p_name}\n👤 Sold to: {username} (`{u}`)")
-            
-            await context.bot.send_message(u, f"✅ **Order Approved!**\n📦 Item: {p_name}\nআপনার ইমেইল অথবা ইনবক্স চেক করুন।")
-            await q.edit_message_text(f"✅ Granted: {p_name} to {username}")
+            await q.edit_message_text(f"✅ Approved {a} Tk for User `{u}`")
 
         # --- ৩. প্রোডাক্ট রিজেক্ট (Product Reject) ---
-        elif d.startswith('no_acc'):
-            # Format: no_acc_UserID
+        # বাটন ফরম্যাট: no_acc_UserID
+        elif d.startswith('no_acc_'):
             u = int(d.split('_')[2])
-            
             await context.bot.send_message(u, "❌ **Order Rejected.**\nদুঃখিত, আপনার প্রোডাক্ট অর্ডারটি বাতিল করা হয়েছে।")
             await q.edit_message_text(f"❌ Product Request Rejected for `{u}`")
 
         # --- ৪. ডিপোজিট রিজেক্ট (Deposit Reject) ---
-        elif d.startswith('no_dep'):
-            # Format: no_dep_UserID
+        # বাটন ফরম্যাট: no_dep_UserID
+        elif d.startswith('no_dep_'):
             u = int(d.split('_')[2])
-            
             await context.bot.send_message(u, "❌ **Deposit Rejected.**\nআপনার পেমেন্ট রিকোয়েস্টটি বাতিল করা হয়েছে।")
             await q.edit_message_text(f"❌ Deposit Rejected for `{u}`")
-            
-        # --- ৫. ফলব্যাক (পুরানো বাটন থাকলে) ---
-        elif d.startswith('no'):
-            # যদি ভুলে আগের বাটন থেকে যায় (no_UserID)
-            try:
-                u = int(d.split('_')[1])
-                await context.bot.send_message(u, "❌ **Request Rejected.**")
-                await q.edit_message_text("❌ Rejected.")
-            except:
-                pass
 
     except Exception as e:
-        print(f"Error: {e}")
-        await q.message.reply_text("⚠️ Error Occurred!")
+        print(f"Admin Access Error: {e}")
+        # ক্র্যাশ না করে এরর দেখাবে (সেফটি)
+        try:
+            await q.message.reply_text(f"⚠️ Error Processing: {str(e)}")
+        except:
+            pass
         
     finally:
         db_pool.putconn(conn)
+                            
     
       
         
