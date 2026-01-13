@@ -122,7 +122,7 @@ TEXTS = {
         'insufficient': "😔 **Insufficient Balance!**\nYou need **{} Tk** more to purchase this item.",
         'bought': "🎉 **Congratulations!**\nPurchase Successful.\n\n📦 **Item:** {}\n📝 **Details:**\n`{}`\n\nThank you for being with us! ❤️",
         'ask_money': "💳 **Add Balance**\n\nDear User, how much money do you want to add?\nPlease write the amount (e.g., 50, 100):",
-        'ask_trx': "✅ **Request: {} Tk**\n━━━━━━━━━━━━\nPlease Send Money to:\n📞 `{}` (bKash Personal)\n\n⚠️ After sending, please type the **Transaction ID (TrxID)** below:",
+        'ask_trx': "✅ **Request: {} Tk**\n━━━━━━━━━━━━\nPlease Send Money to:\n📞 `{01611026722}` (bKash Personal)\n\n⚠️ After sending, please type the **Transaction ID (TrxID)** below:",
         'req_sent': "✅ **Request Submitted!**\n\nYour deposit request has been sent to the Admin. Please wait for confirmation. ⏳",
         'profile': "👤 **User Profile**\n\nName: {}\nID: `{}`\n💰 Balance: `{} Tk`\n🎭 Role: {}",
         'ask_email': "📧 **Email Required**\n\nTo access this product, please provide your **Email Address**:",
@@ -565,27 +565,54 @@ async def input_trx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trx = update.message.text
     amt = context.user_data['amt']
     uid = update.effective_user.id
-    kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"ok_{uid}_{amt}"), InlineKeyboardButton("❌ Reject", callback_data=f"no_{uid}")]]
+    kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"ok_{uid}_{amt}"), InlineKeyboardButton("❌ Reject", callback_data=f"no_dep_{uid}")]]
     await context.bot.send_message(ADMIN_ID, f"🔔 **Deposit**\nUser: {uid}\nAmt: {amt}\nTrx: `{trx}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     await update.message.reply_text(TEXTS[get_user(uid)[2]]['req_sent'])
     return MAIN_STATE
 
 async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    email = update.message.text
-    pid, cost, name = context.user_data['buy_data']
-    uid = update.effective_user.id
-    username = update.effective_user.username
-    u_tag = f"@{username}" if username else "No Username"
+    user = update.effective_user
+    email = update.message.text.strip()
     
-    # Callback data te username pass kora possible na (limit thake), tai pore fetch korbo
-    kb = [[InlineKeyboardButton("✅ Grant", callback_data=f"g_{uid}_{pid}_{cost}"), InlineKeyboardButton("❌ Reject", callback_data=f"f_{uid}")]]
+    # --- লজিক ১: ইউজার যদি বের হতে চায় ---
+    if email.lower() in ['/cancel', 'cancel', 'back']:
+        await update.message.reply_text("❌ Process Cancelled.")
+        await show_main_menu(update, context)
+        return MAIN_STATE
+
+    # --- লজিক ২: ইমেইল ভ্যালিডেশন ---
+    # যদি ইমেইল সঠিক না হয়
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        # বের হওয়ার বাটনসহ ওয়ার্নিং মেসেজ
+        kb_back = [[InlineKeyboardButton("🔙 Cancel / Back", callback_data='menu_main')]]
+        await update.message.reply_text(
+            "⚠️ **Invalid Email!**\n\nদয়া করে সঠিক ইমেইল দিন (যেমন: `abc@gmail.com`) অথবা নিচে **Back** বাটন চাপুন।", 
+            reply_markup=InlineKeyboardMarkup(kb_back),
+            parse_mode='Markdown'
+        )
+        return INPUT_EMAIL  # আবার ইমেইল চাইবে (কিন্তু বাটন দিয়ে বের হতে পারবে)
+        
+    # --- লজিক ৩: সব ঠিক থাকলে অর্ডার প্রসেস ---
+    product_name = context.user_data.get('buying_product')
+    price = context.user_data.get('buying_price')
     
-    # --- FIX FOR ISSUE 4 ---
-    msg = f"⚠️ **Access Req**\n👤 User: {u_tag}\n🆔 ID: `{uid}`\n📦 Item: {name}\n📧 Email: `{email}`"
+    # এডমিনের কাছে বাটন পাঠানো (Acc = Access Product)
+    kb = [
+        [InlineKeyboardButton("✅ Approve", callback_data=f"ok_acc_{user.id}"), 
+         InlineKeyboardButton("❌ Reject", callback_data=f"no_acc_{user.id}")]
+    ]
     
-    await context.bot.send_message(ADMIN_ID, msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    await update.message.reply_text(TEXTS[get_user(uid)[2]]['email_sent'])
+    await context.bot.send_message(
+        ADMIN_ID, 
+        f"🔔 **New Access Order!**\n\n👤 User: {user.first_name} (`{user.id}`)\n📦 Item: {product_name}\n📧 Email: `{email}`\n💰 Paid: {price} Tk", 
+        reply_markup=InlineKeyboardMarkup(kb), 
+        parse_mode='Markdown'
+    )
+    
+    await update.message.reply_text("✅ **Request Sent!**\nএডমিন চেক করে শীঘ্রই অ্যাপ্রুভ করবেন।")
+    await show_main_menu(update, context)
     return MAIN_STATE
+    
   
 
 async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -883,62 +910,90 @@ async def admin_save_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
 
 async def admin_deposit_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    d = update.callback_query.data
+    q = update.callback_query
+    await q.answer()
+    d = q.data
+    
     conn = get_db_connection()
     c = conn.cursor()
     
-    if d.startswith('ok'):
-        _, u_str, a_str = d.split('_')
-        u, a = int(u_str), int(a_str)
-        c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (a, u))
-        conn.commit()
-        await context.bot.send_message(u, f"🎉 Balance Added: {a} Tk")
-        await update.callback_query.edit_message_text(f"✅ Approved {a} Tk")
-        
-    elif d.startswith('g'):
-        _, u_str, pid_str, cost_str = d.split('_')
-        u, pid, cost = int(u_str), int(pid_str), int(cost_str)
-        
-        # 1. Balance kete neya
-        c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (cost, u))
-        
-        # 2. Product name ber kora (Sales table er jonno)
-        c.execute("SELECT name FROM products WHERE id=%s", (pid,))
-        p_res = c.fetchone()
-        p_name = p_res[0] if p_res else "Unknown Item"
-        
-        # 3. --- FIX FOR ISSUE 3 (Sales Table Update) ---
-        c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (u, p_name, cost))
-        conn.commit()
-        
-        # 4. User info ber kora (Username er jonno)
-        try:
-            chat_info = await context.bot.get_chat(u)
-            username = f"@{chat_info.username}" if chat_info.username else "No Username"
-        except:
-            username = "Unknown"
+    try:
+        # --- ১. ডিপোজিট অ্যাপ্রুভ (Deposit Approve) ---
+        if d.startswith('ok'):
+            # Format: ok_UserID_Amount (আপনার আগের ফরম্যাট)
+            _, u_str, a_str = d.split('_')
+            u, a = int(u_str), int(a_str)
+            
+            c.execute("UPDATE users SET balance=balance+%s WHERE user_id=%s", (a, u))
+            conn.commit()
+            
+            await context.bot.send_message(u, f"🎉 **Deposit Successful!**\n💰 Added: {a} Tk")
+            await q.edit_message_text(f"✅ Approved {a} Tk for `{u}`")
+            
+        # --- ২. প্রোডাক্ট এক্সেস অ্যাপ্রুভ (Product Approve) ---
+        elif d.startswith('g'):
+            # Format: g_UserID_ProductID_Cost
+            _, u_str, pid_str, cost_str = d.split('_')
+            u, pid, cost = int(u_str), int(pid_str), int(cost_str)
+            
+            # ব্যালেন্স কাটা
+            c.execute("UPDATE users SET balance=balance-%s WHERE user_id=%s", (cost, u))
+            
+            # প্রোডাক্ট নাম বের করা
+            c.execute("SELECT name FROM products WHERE id=%s", (pid,))
+            p_res = c.fetchone()
+            p_name = p_res[0] if p_res else "Unknown Item"
+            
+            # সেলস টেবিলে আপডেট
+            c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (u, p_name, cost))
+            conn.commit()
+            
+            # ইউজারনেম বের করা (এডমিন নোটিফিকেশনের জন্য)
+            try:
+                chat_info = await context.bot.get_chat(u)
+                username = f"@{chat_info.username}" if chat_info.username else "No Username"
+            except:
+                username = "Unknown"
 
-        # 5. --- FIX FOR ISSUE 1 (Admin Notification) ---
-        await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Access Granted):** {p_name}\n👤 Sold to: {username} (`{u}`)")
-        
-        await context.bot.send_message(u, f"✅ **Approved!**\n📦 Item: {p_name}\nআপনার ইমেইল অথবা ইনবক্স চেক করুন।")
-        await update.callback_query.edit_message_text(f"✅ Granted: {p_name} to {username}")
-        
-        else: 
-        # রিজেক্ট লজিক (Reject Logic)
-        try:
-            # বাটন থেকে ইউজার আইডি বের করা (Format: no_USERID)
-            target_user_id = int(d.split('_')[1])
+            # এডমিন এবং ইউজারকে মেসেজ
+            await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Access Granted):** {p_name}\n👤 Sold to: {username} (`{u}`)")
             
-            # ইউজারকে মেসেজ পাঠানো
-            await context.bot.send_message(target_user_id, "❌ আপনার ডিপোজিট রিকোয়েস্টটি বাতিল (Reject) করা হয়েছে।")
-        except:
-            pass
+            await context.bot.send_message(u, f"✅ **Order Approved!**\n📦 Item: {p_name}\nআপনার ইমেইল অথবা ইনবক্স চেক করুন।")
+            await q.edit_message_text(f"✅ Granted: {p_name} to {username}")
+
+        # --- ৩. প্রোডাক্ট রিজেক্ট (Product Reject) ---
+        elif d.startswith('no_acc'):
+            # Format: no_acc_UserID
+            u = int(d.split('_')[2])
             
-        await update.callback_query.edit_message_text("❌ Rejected.")
+            await context.bot.send_message(u, "❌ **Order Rejected.**\nদুঃখিত, আপনার প্রোডাক্ট অর্ডারটি বাতিল করা হয়েছে।")
+            await q.edit_message_text(f"❌ Product Request Rejected for `{u}`")
+
+        # --- ৪. ডিপোজিট রিজেক্ট (Deposit Reject) ---
+        elif d.startswith('no_dep'):
+            # Format: no_dep_UserID
+            u = int(d.split('_')[2])
+            
+            await context.bot.send_message(u, "❌ **Deposit Rejected.**\nআপনার পেমেন্ট রিকোয়েস্টটি বাতিল করা হয়েছে।")
+            await q.edit_message_text(f"❌ Deposit Rejected for `{u}`")
+            
+        # --- ৫. ফলব্যাক (পুরানো বাটন থাকলে) ---
+        elif d.startswith('no'):
+            # যদি ভুলে আগের বাটন থেকে যায় (no_UserID)
+            try:
+                u = int(d.split('_')[1])
+                await context.bot.send_message(u, "❌ **Request Rejected.**")
+                await q.edit_message_text("❌ Rejected.")
+            except:
+                pass
+
+    except Exception as e:
+        print(f"Error: {e}")
+        await q.message.reply_text("⚠️ Error Occurred!")
+        
+    finally:
+        db_pool.putconn(conn)
     
-    db_pool.putconn(conn) # এটা যেমন ছিল তেমনই থাকবে
-        
       
         
 # --- MAIN ---
