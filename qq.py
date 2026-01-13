@@ -497,7 +497,13 @@ async def universal_menu_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    name = q.data.split('_')[1]
+    
+    # বাটন থেকে নাম বের করা (buy_Netflix -> Netflix)
+    try:
+        name = q.data.split('_', 1)[1]
+    except:
+        name = q.data.split('_')[1]
+
     uid = q.from_user.id
     username = q.from_user.username
     u_tag = f"@{username}" if username else "No Username"
@@ -508,59 +514,97 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = get_db_connection()
     c = conn.cursor()
+    
+    # প্রোডাক্ট চেক
     c.execute("SELECT id, type, price_cust, price_res, content FROM products WHERE name=%s AND (status='unsold' OR type='file' OR type='access') LIMIT 1", (name,))
     item = c.fetchone()
     
     if not item: 
         db_pool.putconn(conn)
-        return await q.answer("❌ Stock Ended!", show_alert=True)
+        return await q.answer("❌ Stock Ended / Out of Stock!", show_alert=True)
     
     pid, ptype, pc, pr, content = item
+    
+    # প্রাইস ক্যালকুলেশন
     base_price = pr if user[3] == 'reseller' else pc
     discount = context.user_data.get('disc', 0)
     final_price = int(base_price - (base_price * discount / 100))
     
+    # ব্যালেন্স চেক
     if user[4] < final_price: 
         db_pool.putconn(conn)
         return await q.answer(t['insufficient'].format(final_price - user[4]), show_alert=True)
         
+    # --- FIX: Access Type Logic ---
     if ptype == 'access':
-        # Access type e sales record ekhon hobe na, admin grant korle hobe
-        context.user_data['buy_data'] = (pid, final_price, name)
+        # এক্সেস প্রোডাক্টের ক্ষেত্রে ব্যালেন্স এখন কাটা হবে না (এডমিন অ্যাপ্রুভ করলে কাটা হবে)
+        # ডাটা সেভ করা হচ্ছে যাতে input_email এ ব্যবহার করা যায়
+        context.user_data['buying_product'] = name       # <--- এই লাইনটি আগে মিসিং বা ভিন্ন ছিল
+        context.user_data['buying_price'] = final_price  # <--- এই লাইনটি আগে মিসিং বা ভিন্ন ছিল
+        context.user_data['buying_pid'] = pid            # <--- প্রোডাক্ট আইডিও সেভ রাখলাম (ভবিষ্যতের জন্য)
+        
         await q.message.reply_text(t['ask_email'])
         db_pool.putconn(conn)
         return INPUT_EMAIL
     
+    # --- Instant Purchase (Account / File) ---
     if ptype == 'account':
         c.execute("UPDATE products SET status='sold' WHERE id=%s", (pid,))
         
-    # Instant Purchase Logic
+    # ১. ব্যালেন্স কাটা
     c.execute("UPDATE users SET balance = balance - %s WHERE user_id=%s", (final_price, uid))
+    
+    # ২. সেলস রেকর্ড করা
     c.execute("INSERT INTO sales (user_id, product_name, price) VALUES (%s,%s,%s)", (uid, name, final_price))
     conn.commit()
     db_pool.putconn(conn)
     
+    # ডিসকাউন্ট রিসেট
     if 'disc' in context.user_data: del context.user_data['disc']
     
-    # --- FIX FOR ISSUE 2 ---
-    await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Instant):** {name}\n👤 Buyer: {u_tag} (`{uid}`)")
+    # ৩. এডমিন নোটিফিকেশন
+    try:
+        await context.bot.send_message(ADMIN_ID, f"📢 **Sold (Instant):** {name}\n👤 Buyer: {u_tag} (`{uid}`)\n💰 Price: {final_price} Tk")
+    except:
+        pass
     
+    # ৪. ইউজারকে ডেলিভারি দেওয়া
     await q.message.reply_text(t['bought'].format(name, content), parse_mode='Markdown') 
     await show_main_menu(update, context)
     return MAIN_STATE
+        
   
     
 # --- INPUTS ---
 async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        amt = int(update.message.text)
-        context.user_data['amt'] = amt
-        u = get_user(update.effective_user.id)
-        await update.message.reply_text(TEXTS[u[2]]['ask_trx'].format(amt, amt, BKASH_NUMBER), parse_mode='Markdown')
-        return INPUT_TRX
-    except: 
-        await update.message.reply_text("⚠️ Only Numbers (e.g. 50). Try again:")
+    # ইনপুট থেকে স্পেস সরানো হচ্ছে
+    text = update.message.text.strip()
+    user = update.effective_user
+    
+    # যদি ইউজার চ্যাট থেকে বের হতে চায়
+    if text.lower() in ['cancel', 'back', '/cancel']:
+        await update.message.reply_text("❌ Cancelled.")
+        await show_main_menu(update, context)
+        return MAIN_STATE
+
+    # --- ফিক্স: সহজ নাম্বার চেকিং ---
+    if not text.isdigit():
+        await update.message.reply_text("⚠️ **Invalid Amount!**\n\nPlease enter only numbers (e.g. 100, 500).\nদয়া করে শুধুমাত্র সংখ্যা লিখুন।")
         return INPUT_MONEY
+        
+    amount = int(text)
+    
+    if amount < 10: # মিনিমাম লিমিট (চাইলে বদলাতে পারেন)
+        await update.message.reply_text("⚠️ Minimum deposit is 10 Tk.")
+        return INPUT_MONEY
+
+    # ডাটা সেভ রাখা
+    context.user_data['dep_amount'] = amount
+    
+    # পেমেন্ট মেথড বা ট্রানজেকশন আইডি চাওয়া
+    await update.message.reply_text(f"💰 **Amount: {amount} Tk**\n\nPlease send your **Payment Transaction ID** (TrxID) or screenshot now:\nআপনার পেমেন্ট এর TrxID দিন:")
+    return INPUT_TRX
+    
 
 async def input_trx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trx = update.message.text
