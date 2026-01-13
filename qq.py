@@ -211,49 +211,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db_connection()
     c = conn.cursor()
     
+    # কোন স্টেটে যাবে সেটা ট্র্যাক করার জন্য ভেরিয়েবল
+    next_state = SELECT_LANG 
+    show_lang_menu = True
+
     try:
-        # ১. চেক করি ইউজার আগে থেকেই ডাটাবেসে আছে কিনা
+        # ১. চেক করি ইউজার আছে কিনা
         c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
         db_user = c.fetchone()
         
         if db_user:
-            # === পুরাতন ইউজার (Old User) ===
-            # যদি ভাষা সেট করা থাকে (BN বা EN), সরাসরি মেইন মেনু দেখাবো
+            # === পুরাতন ইউজার ===
+            # ভাষা ঠিক থাকলে মেইন মেনুতে পাঠাবো
             if db_user[2] in ['BN', 'EN']:
                 await update.message.reply_text(f"👋 Welcome back, **{first_name}**!", parse_mode='Markdown')
                 await show_main_menu(update, context)
-                db_pool.putconn(conn)
-                return MAIN_STATE
+                
+                next_state = MAIN_STATE # মেইন স্টেটে পাঠাবো
+                show_lang_menu = False  # ভাষা মেনু দেখাবো না
+        
         else:
-            # === নতুন ইউজার (New User) ===
-            # যেহেতু ডাটাবেসে নেই, তাই ইনি নতুন। এখনই রেফারেল চেক করবো।
-            
-            # ---> রেফারেল বোনাস লজিক <---
+            # === নতুন ইউজার ===
+            # রেফারেল চেক
             args = context.args
             if args and args[0].startswith('ref_'):
                 try:
                     referrer_id = int(args[0].split('_')[1])
-                    
-                    # নিজের লিংকে নিজে ঢুকলে বোনাস পাবে না
                     if referrer_id != uid:
-                        # রেফারারের ব্যালেন্স ১ টাকা বাড়ানো
                         c.execute("UPDATE users SET balance = balance + 1 WHERE user_id=%s", (referrer_id,))
-                        conn.commit()
-                        
-                        # রেফারারকে মেসেজ পাঠানো
+                        # রেফারারকে নোটিফিকেশন (অপশনাল, এরর এড়াতে try-except এ রাখা ভালো)
                         try:
-                            await context.bot.send_message(
-                                referrer_id, 
-                                f"🎉 **Referral Bonus!**\n\nনতুন ইউজার **{first_name}** আপনার লিংকে জয়েন করেছে।\n💰 আপনার ব্যালেন্সে **1 Tk** যুক্ত হয়েছে!"
-                            )
+                            await context.bot.send_message(referrer_id, f"🎉 **Referral Bonus!**\nUser: {first_name}\n💰 Balance +1 Tk")
                         except:
                             pass
-                except Exception as e:
-                    print(f"Refer Error: {e}")
+                except:
+                    pass
 
-            # ---> নতুন ইউজার তৈরি করা <---
-            # create_user ফাংশনের কাজটা এখানেই করে দিচ্ছি যাতে কনফিউশন না থাকে
-            # ডিফল্ট ভাষা 'BN' ও রোল 'customer' দিয়ে সেভ করলাম
+            # নতুন ইউজার সেভ করা
             c.execute("INSERT INTO users (user_id, first_name, role, balance, lang) VALUES (%s, %s, 'customer', 0, 'BN')", (uid, first_name))
             conn.commit()
 
@@ -261,18 +255,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Start Error: {e}")
     
     finally:
+        # কানেকশন ক্লোজ করা (মাত্র একবারই হবে এখন)
         db_pool.putconn(conn)
 
-    # ৪. ভাষা নির্বাচন (নতুন ইউজার বা যাদের ভাষা সেট নেই তাদের জন্য)
-    kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
-    
-    # সুন্দর ওয়েলকাম মেসেজ
-    await update.message.reply_text(
-        f"👋 **Welcome to Our Shop!**\n\nHello {first_name}, please select your language to continue:\nআপনার ভাষা নির্বাচন করুন:", 
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode='Markdown'
-    )
-    return SELECT_LANG
+    # লজিক অনুযায়ী রেসপন্স
+    if show_lang_menu:
+        kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
+        await update.message.reply_text(
+            f"👋 **Welcome to Our Shop!**\n\nHello {first_name}, please select your language:\nআপনার ভাষা নির্বাচন করুন:", 
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return SELECT_LANG
+    else:
+        return next_state
     
     
 
