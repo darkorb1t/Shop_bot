@@ -650,7 +650,7 @@ async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_
     try:
         # --- ১. ব্যাক বাটন ---
         if d == 'adm_back' or d == 'adm_panel':
-            await admin_panel(update, context)
+            await admin_start(update, context)
             return MAIN_STATE
 
         # --- ২. প্রোডাক্ট অ্যাড ---
