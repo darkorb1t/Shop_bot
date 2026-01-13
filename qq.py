@@ -205,28 +205,75 @@ def create_user(user):
 # --- START & LANG ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    uid = user.id
+    first_name = user.first_name
     
-    # ১. সেইফ ইউজার ক্রিয়েশন (Safe User Creation)
+    conn = get_db_connection()
+    c = conn.cursor()
+    
     try:
-        create_user(user)
+        # ১. চেক করি ইউজার আগে থেকেই ডাটাবেসে আছে কিনা
+        c.execute("SELECT * FROM users WHERE user_id=%s", (uid,))
+        db_user = c.fetchone()
+        
+        if db_user:
+            # === পুরাতন ইউজার (Old User) ===
+            # যদি ভাষা সেট করা থাকে (BN বা EN), সরাসরি মেইন মেনু দেখাবো
+            if db_user[2] in ['BN', 'EN']:
+                await update.message.reply_text(f"👋 Welcome back, **{first_name}**!", parse_mode='Markdown')
+                await show_main_menu(update, context)
+                db_pool.putconn(conn)
+                return MAIN_STATE
+        else:
+            # === নতুন ইউজার (New User) ===
+            # যেহেতু ডাটাবেসে নেই, তাই ইনি নতুন। এখনই রেফারেল চেক করবো।
+            
+            # ---> রেফারেল বোনাস লজিক <---
+            args = context.args
+            if args and args[0].startswith('ref_'):
+                try:
+                    referrer_id = int(args[0].split('_')[1])
+                    
+                    # নিজের লিংকে নিজে ঢুকলে বোনাস পাবে না
+                    if referrer_id != uid:
+                        # রেফারারের ব্যালেন্স ১ টাকা বাড়ানো
+                        c.execute("UPDATE users SET balance = balance + 1 WHERE user_id=%s", (referrer_id,))
+                        conn.commit()
+                        
+                        # রেফারারকে মেসেজ পাঠানো
+                        try:
+                            await context.bot.send_message(
+                                referrer_id, 
+                                f"🎉 **Referral Bonus!**\n\nনতুন ইউজার **{first_name}** আপনার লিংকে জয়েন করেছে।\n💰 আপনার ব্যালেন্সে **1 Tk** যুক্ত হয়েছে!"
+                            )
+                        except:
+                            pass
+                except Exception as e:
+                    print(f"Refer Error: {e}")
+
+            # ---> নতুন ইউজার তৈরি করা <---
+            # create_user ফাংশনের কাজটা এখানেই করে দিচ্ছি যাতে কনফিউশন না থাকে
+            # ডিফল্ট ভাষা 'BN' ও রোল 'customer' দিয়ে সেভ করলাম
+            c.execute("INSERT INTO users (user_id, first_name, role, balance, lang) VALUES (%s, %s, 'customer', 0, 'BN')", (uid, first_name))
+            conn.commit()
+
     except Exception as e:
-        print(f"DB Login Error: {e}") 
+        print(f"Start Error: {e}")
     
-    # ২. ইউজার ডাটা চেক করা
-    db_user = get_user(user.id)
+    finally:
+        db_pool.putconn(conn)
 
-    # ৩. স্মার্ট চেক: যদি ইউজার আগে থেকেই থাকে এবং ভাষা সেট করা থাকে
-    # (db_user[2] হলো ভাষা কলাম)
-    if db_user and db_user[2] in ['BN', 'EN']:
-        # ওয়েলকাম মেসেজ দিয়ে সরাসরি মেইন মেনু
-        await update.message.reply_text(f"👋 Welcome back, **{user.first_name}**!", parse_mode='Markdown')
-        await show_main_menu(update, context)
-        return MAIN_STATE
-
-    # ৪. যদি নতুন ইউজার হয় অথবা ভাষা সেট করা না থাকে, তাহলে বাটন দেখাবে
+    # ৪. ভাষা নির্বাচন (নতুন ইউজার বা যাদের ভাষা সেট নেই তাদের জন্য)
     kb = [[InlineKeyboardButton("English 🇺🇸", callback_data='lang_EN'), InlineKeyboardButton("বাংলা 🇧🇩", callback_data='lang_BN')]]
-    await update.message.reply_text("Please select your language / ভাষা নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(kb))
+    
+    # সুন্দর ওয়েলকাম মেসেজ
+    await update.message.reply_text(
+        f"👋 **Welcome to Our Shop!**\n\nHello {first_name}, please select your language to continue:\nআপনার ভাষা নির্বাচন করুন:", 
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode='Markdown'
+    )
     return SELECT_LANG
+    
     
 
 async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
