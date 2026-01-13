@@ -581,29 +581,53 @@ async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user = update.effective_user
     
+    # ভাষা চেক করা (যাতে মেসেজ সেই ভাষায় যায়)
+    db_user = get_user(user.id)
+    lang = db_user[2] if db_user else 'BN'
+    
     # যদি ইউজার চ্যাট থেকে বের হতে চায়
     if text.lower() in ['cancel', 'back', '/cancel']:
         await update.message.reply_text("❌ Cancelled.")
         await show_main_menu(update, context)
         return MAIN_STATE
 
-    # --- ফিক্স: সহজ নাম্বার চেকিং ---
+    # নাম্বার চেকিং
     if not text.isdigit():
         await update.message.reply_text("⚠️ **Invalid Amount!**\n\nPlease enter only numbers (e.g. 100, 500).\nদয়া করে শুধুমাত্র সংখ্যা লিখুন।")
         return INPUT_MONEY
         
     amount = int(text)
     
-    if amount < 10: # মিনিমাম লিমিট (চাইলে বদলাতে পারেন)
+    if amount < 10: 
         await update.message.reply_text("⚠️ Minimum deposit is 10 Tk.")
         return INPUT_MONEY
 
     # ডাটা সেভ রাখা
     context.user_data['dep_amount'] = amount
     
-    # পেমেন্ট মেথড বা ট্রানজেকশন আইডি চাওয়া
-    await update.message.reply_text(f"💰 **Amount: {amount} Tk**\n\nPlease send your **Payment Transaction ID** (TrxID) or screenshot now:\nআপনার পেমেন্ট এর TrxID দিন:")
+    # --- পেমেন্ট নাম্বার ও মেসেজ ---
+    payment_number = "01611026722"  # <--- এখানে আপনার নাম্বার বসান (bKash/Nagad)
+    
+    if lang == 'EN':
+        msg = (
+            f"✅ **Request:** {amount} Tk\n"
+            f"━━━━━━━━━━━━\n"
+            f"Please Send Money to:\n"
+            f"📞 `{payment_number}` (bKash/Nagad)\n\n"
+            f"⚠️ After sending, please enter the **Transaction ID (TrxID)** below:"
+        )
+    else:
+        msg = (
+            f"✅ **অনুরোধ:** {amount} টাকা\n"
+            f"━━━━━━━━━━━━\n"
+            f"আপনার {amount} টাকা এই নাম্বারে সেন্ড মানি করুন:\n"
+            f"📞 `{payment_number}` (bKash/Nagad)\n\n"
+            f"⚠️ টাকা পাঠানোর পর নিচের বক্সে **Transaction ID (TrxID)** লিখে পাঠান:"
+        )
+    
+    await update.message.reply_text(msg, parse_mode='Markdown')
     return INPUT_TRX
+    
     
 
 async def input_trx(update: Update, context: ContextTypes.DEFAULT_TYPE):
