@@ -2,6 +2,7 @@ import logging
 import psycopg2
 from psycopg2 import pool
 import threading
+import re
 import random
 import string
 from flask import Flask
@@ -571,48 +572,55 @@ async def input_trx(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_STATE
 
 async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    email = update.message.text.strip()
-    
-    # --- লজিক ১: ইউজার যদি বের হতে চায় ---
-    if email.lower() in ['/cancel', 'cancel', 'back']:
-        await update.message.reply_text("❌ Process Cancelled.")
+    # এই try-except ব্লক এরর ধরতে সাহায্য করবে
+    try:
+        user = update.effective_user
+        email = update.message.text.strip()
+        
+        # --- লজিক ১: ইউজার যদি বের হতে চায় ---
+        if email.lower() in ['/cancel', 'cancel', 'back']:
+            await update.message.reply_text("❌ Process Cancelled.")
+            await show_main_menu(update, context)
+            return MAIN_STATE
+
+        # --- লজিক ২: ইমেইল ভ্যালিডেশন ---
+        # import re না থাকলে এখানে ক্র্যাশ করবে, তাই উপরে import re অবশ্যই দিবেন
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            kb_back = [[InlineKeyboardButton("🔙 Cancel / Back", callback_data='menu_main')]]
+            await update.message.reply_text(
+                "⚠️ **Invalid Email!**\n\nদয়া করে একটি সঠিক ইমেইল এড্রেস দিন (যেমন: `abc@gmail.com`)।", 
+                reply_markup=InlineKeyboardMarkup(kb_back),
+                parse_mode='Markdown'
+            )
+            return INPUT_EMAIL
+            
+        # --- লজিক ৩: সব ঠিক থাকলে অর্ডার প্রসেস ---
+        product_name = context.user_data.get('buying_product')
+        price = context.user_data.get('buying_price')
+        
+        # বাটন পাঠানো (Acc = Access Product)
+        kb = [
+            [InlineKeyboardButton("✅ Approve", callback_data=f"ok_acc_{user.id}"), 
+             InlineKeyboardButton("❌ Reject", callback_data=f"no_acc_{user.id}")]
+        ]
+        
+        await context.bot.send_message(
+            ADMIN_ID, 
+            f"🔔 **New Access Order!**\n\n👤 User: {user.first_name} (`{user.id}`)\n📦 Item: {product_name}\n📧 Email: `{email}`\n💰 Paid: {price} Tk", 
+            reply_markup=InlineKeyboardMarkup(kb), 
+            parse_mode='Markdown'
+        )
+        
+        await update.message.reply_text("✅ **Request Sent!**\nআপনার ইমেইল এড্রেসটি এডমিনের কাছে পাঠানো হয়েছে। শীঘ্রই অ্যাপ্রুভ করা হবে।")
         await show_main_menu(update, context)
         return MAIN_STATE
 
-    # --- লজিক ২: ইমেইল ভ্যালিডেশন ---
-    # যদি ইমেইল সঠিক না হয়
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-        # বের হওয়ার বাটনসহ ওয়ার্নিং মেসেজ
-        kb_back = [[InlineKeyboardButton("🔙 Cancel / Back", callback_data='menu_main')]]
-        await update.message.reply_text(
-            "⚠️ **Invalid Email!**\n\nদয়া করে সঠিক ইমেইল দিন (যেমন: `abc@gmail.com`) অথবা নিচে **Back** বাটন চাপুন।", 
-            reply_markup=InlineKeyboardMarkup(kb_back),
-            parse_mode='Markdown'
-        )
-        return INPUT_EMAIL  # আবার ইমেইল চাইবে (কিন্তু বাটন দিয়ে বের হতে পারবে)
-        
-    # --- লজিক ৩: সব ঠিক থাকলে অর্ডার প্রসেস ---
-    product_name = context.user_data.get('buying_product')
-    price = context.user_data.get('buying_price')
-    
-    # এডমিনের কাছে বাটন পাঠানো (Acc = Access Product)
-    kb = [
-        [InlineKeyboardButton("✅ Approve", callback_data=f"ok_acc_{user.id}"), 
-         InlineKeyboardButton("❌ Reject", callback_data=f"no_acc_{user.id}")]
-    ]
-    
-    await context.bot.send_message(
-        ADMIN_ID, 
-        f"🔔 **New Access Order!**\n\n👤 User: {user.first_name} (`{user.id}`)\n📦 Item: {product_name}\n📧 Email: `{email}`\n💰 Paid: {price} Tk", 
-        reply_markup=InlineKeyboardMarkup(kb), 
-        parse_mode='Markdown'
-    )
-    
-    await update.message.reply_text("✅ **Request Sent!**\nএডমিন চেক করে শীঘ্রই অ্যাপ্রুভ করবেন।")
-    await show_main_menu(update, context)
-    return MAIN_STATE
-    
+    except Exception as e:
+        # যদি কোনো এরর হয়, বট এখানে বলে দিবে
+        print(f"Email Error: {e}") 
+        await update.message.reply_text(f"⚠️ Error: {e}")
+        return MAIN_STATE
+            
   
 
 async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
