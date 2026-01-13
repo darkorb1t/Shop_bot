@@ -613,7 +613,7 @@ async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ **Request:** {amount} Tk\n"
             f"━━━━━━━━━━━━\n"
             f"Please Send Money to:\n"
-            f"📞 `{payment_number}` (bKash/Nagad)\n\n"
+            f"📞 `{payment_number}` (bKash)\n\n"
             f"⚠️ After sending, please enter the **Transaction ID (TrxID)** below:"
         )
     else:
@@ -621,7 +621,7 @@ async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ **অনুরোধ:** {amount} টাকা\n"
             f"━━━━━━━━━━━━\n"
             f"আপনার {amount} টাকা এই নাম্বারে সেন্ড মানি করুন:\n"
-            f"📞 `{payment_number}` (bKash/Nagad)\n\n"
+            f"📞 `{payment_number}` (bKash)\n\n"
             f"⚠️ টাকা পাঠানোর পর নিচের বক্সে **Transaction ID (TrxID)** লিখে পাঠান:"
         )
     
