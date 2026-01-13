@@ -245,76 +245,101 @@ async def lang_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
 # --- ROLE & LOGIN ---
-async def ask_role_screen(update: Update, context, lang):
-    t = TEXTS[lang]
-    user_name = update.effective_user.first_name
-    kb = [[InlineKeyboardButton(t['role_btn_cust'], callback_data='role_cust'), InlineKeyboardButton(t['role_btn_res'], callback_data='role_res')]]
-    msg_text = t['welcome_msg'].format(user_name)
-    if update.callback_query: await update.callback_query.message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    else: await update.message.reply_text(msg_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    return SELECT_ROLE
+async def ask_role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    db_user = get_user(user.id)
+    lang = db_user[2] if db_user else 'BN'
+    
+    # ভাষার ওপর ভিত্তি করে টেক্সট
+    if lang == 'EN':
+        txt = "👤 **Select Identity:**\n\nAre you a Customer or a Reseller?"
+        btn_cust = "👤 Customer"
+        btn_res = "🔐 Reseller"
+    else:
+        txt = "👤 **পরিচয় নির্বাচন করুন:**\n\nআপনি কি কাস্টমার নাকি রিসেলার?"
+        btn_cust = "👤 কাস্টমার"
+        btn_res = "🔐 রিসেলার"
 
-async def role_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    data = q.data
-    uid = q.from_user.id
+    kb = [
+        [InlineKeyboardButton(btn_cust, callback_data='role_customer')],
+        [InlineKeyboardButton(btn_res, callback_data='role_reseller')]
+    ]
     
-    # Lang check for text (Optional optimization: pass lang if possible, else fetch)
-    # Ekhane simple rakha holo logic thik rekhe
-    
-    if data == 'role_cust':
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("UPDATE users SET role='customer' WHERE user_id=%s", (uid,))
-        conn.commit()
-        db_pool.putconn(conn)  # <-- Fixed
-        await show_main_menu(update, context)
-        return MAIN_STATE
+    # সেফটি চেক: মেসেজ এডিট হবে নাকি নতুন পাঠাবে
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        except:
+             await update.callback_query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         
-    elif data == 'role_res':
-        # Reseller e kono DB update nei, tai direct input e pathano holo
-        await q.message.reply_text("🔐 Enter Reseller ID:") # Text ta language onujayi dynamic kora jay
-        return RESELLER_INPUT
-
-async def reseller_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    uid = update.effective_user.id
+    return SELECT_ROLE
     
-    if text.startswith('/'): return await start(update, context)
 
+async def role_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    d = q.data
+    user_id = q.from_user.id
     conn = get_db_connection()
     c = conn.cursor()
 
-    if 'awaiting_pass' in context.user_data:
-        rid = context.user_data['temp_rid']
-        c.execute("SELECT * FROM resellers WHERE res_id=%s AND password=%s", (rid, text))
-        if c.fetchone():
-            c.execute("UPDATE users SET role='reseller' WHERE user_id=%s", (uid,))
-            conn.commit()
-            del context.user_data['awaiting_pass']
-            await update.message.reply_text("✅ Login Successful! Welcome Boss.")
-            await show_main_menu(update, context)
-            db_pool.putconn(conn)  # <-- Fixed
-            return MAIN_STATE
-        else:
-            del context.user_data['awaiting_pass']
-            await update.message.reply_text("❌ Login Failed! Try again.") # Simplified text
-            db_pool.putconn(conn)  # <-- Fixed
-            # Ekhane abar role screen e pathano jete pare ba input e
-            return await start(update, context) 
-
-    c.execute("SELECT * FROM resellers WHERE res_id=%s", (text,))
-    if c.fetchone():
-        context.user_data['temp_rid'] = text
-        context.user_data['awaiting_pass'] = True
-        await update.message.reply_text("🔑 Enter Password:")
-        db_pool.putconn(conn)  # <-- Fixed
-        return RESELLER_INPUT
-    else:
-        await update.message.reply_text("❌ Invalid ID.")
-        db_pool.putconn(conn)  # <-- Fixed
-        return await start(update, context)
+    if d == 'role_customer':
+        # ১. কাস্টমার হলে সোজা মেইন মেনুতে
+        c.execute("UPDATE users SET role='customer' WHERE user_id=%s", (user_id,))
+        conn.commit()
+        db_pool.putconn(conn)
         
+        await q.edit_message_text("✅ You are now a **Customer**.")
+        await show_main_menu(update, context)
+        return MAIN_STATE
+
+    elif d == 'role_reseller':
+        # ২. রিসেলার হলে লগইন করতে বলবে (আলাদা স্টেটে পাঠাবে)
+        db_pool.putconn(conn)
+        await q.message.reply_text("🔐 **Reseller Login**\n\nআপনার রিসেলার **ID** দিন:\n(শুধু আইডি লিখুন)")
+        return INPUT_RES_LOGIN
+        
+
+# স্টেপ ১: আইডি নিবে
+async def reseller_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    
+    # আইডি সেভ করে রাখলাম পরের ধাপের জন্য
+    context.user_data['res_id_attempt'] = text
+    
+    await update.message.reply_text(f"🆔 ID: `{text}`\n🔑 এবার আপনার **Password** দিন:")
+    return INPUT_RES_PASS
+
+# স্টেপ ২: পাসওয়ার্ড নিবে এবং চেক করবে
+async def reseller_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    password = update.message.text.strip()
+    res_id = context.user_data.get('res_id_attempt') # আগের ধাপের আইডি
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # ডাটাবেসে আইডি ও পাসওয়ার্ড মিলছে কিনা চেক
+    c.execute("SELECT * FROM resellers WHERE res_id=%s AND password=%s", (res_id, password))
+    res = c.fetchone()
+    
+    if res:
+        # লগইন সফল! রোল আপডেট করে মেনু দেখাবে
+        c.execute("UPDATE users SET role='reseller' WHERE user_id=%s", (user_id,))
+        conn.commit()
+        db_pool.putconn(conn)
+        
+        await update.message.reply_text("✅ **Login Successful!** Welcome Boss.")
+        await show_main_menu(update, context)
+        return MAIN_STATE
+    else:
+        # ভুল হলে
+        db_pool.putconn(conn)
+        await update.message.reply_text("❌ ভুল আইডি বা পাসওয়ার্ড!\nআবার চেষ্টা করতে /start দিন।")
+        return ConversationHandler.END
+    
 
 # --- MENU & NAVIGATION ---
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -913,39 +938,59 @@ def main():
     # কানেকশন টাইমআউট বাড়ানো হলো (৬০ সেকেন্ড)
     req = HTTPXRequest(connect_timeout=60, read_timeout=60)
     
-    # অ্যাপ বিল্ডার আপডেট করা হলো
+    # অ্যাপ বিল্ডার
     app = Application.builder().token(TOKEN).request(req).build()
     
-    # --- HANDLERS ---
+    # --- HANDLERS (মেনু ও এডমিন প্যাটার্ন) ---
+    # 'menu_' দিয়ে শুরু হওয়া সব বাটন (menu_reset সহ) এখানে হ্যান্ডেল হবে
     menu_h = CallbackQueryHandler(universal_menu_handler, pattern='^menu_')
+    
+    # 'adm_' দিয়ে শুরু হওয়া সব বাটন (adm_users, adm_res_list সহ) এখানে হ্যান্ডেল হবে
     admin_h = CallbackQueryHandler(universal_admin_handler, pattern='^adm_')
     
     conv = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
+            # ১. ভাষা সিলেকশন
             SELECT_LANG: [CallbackQueryHandler(lang_choice, pattern='^lang_')],
-            SELECT_ROLE: [CallbackQueryHandler(ask_role_screen, pattern='^back_'), CallbackQueryHandler(role_handler, pattern='^role_')],
-            RESELLER_INPUT: [MessageHandler(filters.TEXT, reseller_input)],
+            
+            # ২. রোল সিলেকশন (Customer / Reseller)
+            SELECT_ROLE: [CallbackQueryHandler(role_choice, pattern='^role_')],
+            
+            # ৩. রিসেলার লগইন (২ ধাপ: আইডি -> পাসওয়ার্ড) - আপডেটেড এবং নিরাপদ
+            INPUT_RES_LOGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, reseller_login)],
+            INPUT_RES_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, reseller_pass)],
+            
+            # ৪. মেইন মেনু স্টেট (সব বাটন কাজ করবে)
             MAIN_STATE: [
                 menu_h, 
                 admin_h, 
                 CallbackQueryHandler(buy_handler, pattern='^buy_'), 
                 CallbackQueryHandler(admin_delete_confirm, pattern='^del_')
             ],
-            INPUT_MONEY: [MessageHandler(filters.TEXT, input_money), menu_h, admin_h],
-            INPUT_TRX: [MessageHandler(filters.TEXT, input_trx), menu_h, admin_h],
-            INPUT_EMAIL: [MessageHandler(filters.TEXT, input_email), menu_h, admin_h],
-            INPUT_COUPON: [MessageHandler(filters.TEXT, input_coupon), menu_h, admin_h],
-            INPUT_ADMIN_PROD: [MessageHandler(filters.TEXT, admin_save_prod), admin_h, menu_h],
-            INPUT_ADMIN_COUPON: [MessageHandler(filters.TEXT, admin_save_coupon), admin_h, menu_h],
-            INPUT_BROADCAST: [MessageHandler(filters.TEXT, admin_broadcast), admin_h, menu_h]
+            
+            # ৫. অন্যান্য ইনপুট স্টেটস (টাকা, ট্রানজেকশন, কুপন ইত্যাদি)
+            INPUT_MONEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_money), menu_h, admin_h],
+            INPUT_TRX: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_trx), menu_h, admin_h],
+            INPUT_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_email), menu_h, admin_h],
+            INPUT_COUPON: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_coupon), menu_h, admin_h],
+            
+            # ৬. এডমিন ইনপুট স্টেটস
+            INPUT_ADMIN_PROD: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_save_prod), admin_h, menu_h],
+            INPUT_ADMIN_COUPON: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_save_coupon), admin_h, menu_h],
+            INPUT_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast), admin_h, menu_h]
         },
+        # ফলব্যাক: যেকোনো অবস্থায় start বা admin কমান্ড দিলে কাজ করবে
         fallbacks=[CommandHandler('start', start), CommandHandler('admin', admin_start)]
     )
-    # ব্যালেন্স কাটার কমান্ড হ্যান্ডলার
+    
+    # হ্যান্ডলারগুলো অ্যাপে যুক্ত করা
+    app.add_handler(conv)
+    
+    # ব্যালেন্স কাটার কমান্ড (/cut user amount) - গ্লোবাল হ্যান্ডলার হিসেবে রাখা হলো
     app.add_handler(CommandHandler("cut", cut_balance))
     
-    app.add_handler(conv)
+    # এডমিন ডিপোজিট অ্যাপ্রুভাল হ্যান্ডলার
     app.add_handler(CallbackQueryHandler(admin_deposit_access, pattern='^(ok|no|g|f)_'))
     
     print("Bot Running... (Press Ctrl+C to stop)")
