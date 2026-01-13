@@ -607,13 +607,43 @@ async def input_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 
 async def input_trx(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    trx = update.message.text
-    amt = context.user_data['amt']
-    uid = update.effective_user.id
-    kb = [[InlineKeyboardButton("✅ Approve", callback_data=f"ok_{uid}_{amt}"), InlineKeyboardButton("❌ Reject", callback_data=f"no_dep_{uid}")]]
-    await context.bot.send_message(ADMIN_ID, f"🔔 **Deposit**\nUser: {uid}\nAmt: {amt}\nTrx: `{trx}`", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    await update.message.reply_text(TEXTS[get_user(uid)[2]]['req_sent'])
+    trx = update.message.text.strip()
+    user = update.effective_user
+    uid = user.id
+    
+    # এমাউন্ট নেওয়া (input_money ফাংশনে আমরা 'dep_amount' সেভ করেছিলাম)
+    # যদি আগের কোডে 'amt' থাকে, তাই সেফটির জন্য দুটোই চেক করছি
+    amt = context.user_data.get('dep_amount', context.user_data.get('amt', 0))
+    
+    # --- ফিক্স: বাটন ফরম্যাট ---
+    # Approve হতে হবে: ok_dep_UID_Amount
+    # Reject হতে হবে: no_dep_UID
+    kb = [
+        [InlineKeyboardButton("✅ Approve", callback_data=f"ok_dep_{uid}_{amt}"), 
+         InlineKeyboardButton("❌ Reject", callback_data=f"no_dep_{uid}")]
+    ]
+    
+    # এডমিনকে নোটিফিকেশন পাঠানো
+    await context.bot.send_message(
+        ADMIN_ID, 
+        f"🔔 **New Deposit Request!**\n\n👤 User: {user.first_name} (`{uid}`)\n💰 Amount: {amt} Tk\n📝 TrxID: `{trx}`", 
+        reply_markup=InlineKeyboardMarkup(kb), 
+        parse_mode='Markdown'
+    )
+    
+    # ইউজারকে কনফার্মেশন মেসেজ
+    try:
+        # আপনার আগের লজিক অনুযায়ী ভাষা চেক
+        db_user = get_user(uid)
+        lang = db_user[2] if db_user else 'BN'
+        await update.message.reply_text(TEXTS[lang]['req_sent'])
+    except:
+        await update.message.reply_text("✅ **Request Sent!**\nঅ্যাডমিন চেক করে ব্যালেন্স অ্যাড করে দিবেন।")
+    
+    # মেইন মেনুতে ফেরত পাঠানো
+    await show_main_menu(update, context)
     return MAIN_STATE
+    
 
 async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # এই try-except ব্লক এরর ধরতে সাহায্য করবে
@@ -641,10 +671,13 @@ async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- লজিক ৩: সব ঠিক থাকলে অর্ডার প্রসেস ---
         product_name = context.user_data.get('buying_product')
         price = context.user_data.get('buying_price')
+        pid = context.user_data.get('buying_pid') # প্রোডাক্ট আইডিও লাগবে
         
-        # বাটন পাঠানো (Acc = Access Product)
+        # --- ফিক্স: বাটন ফরম্যাট আপডেট ---
+        # Approve: g_UserID_PID_Price (যাতে এডমিন প্যানেল নাম খুঁজে পায়)
+        # Reject: no_acc_UserID
         kb = [
-            [InlineKeyboardButton("✅ Approve", callback_data=f"ok_acc_{user.id}"), 
+            [InlineKeyboardButton("✅ Approve", callback_data=f"g_{user.id}_{pid}_{price}"), 
              InlineKeyboardButton("❌ Reject", callback_data=f"no_acc_{user.id}")]
         ]
         
@@ -660,11 +693,10 @@ async def input_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_STATE
 
     except Exception as e:
-        # যদি কোনো এরর হয়, বট এখানে বলে দিবে
         print(f"Email Error: {e}") 
         await update.message.reply_text(f"⚠️ Error: {e}")
         return MAIN_STATE
-            
+        
   
 
 async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
