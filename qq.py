@@ -789,12 +789,24 @@ async def input_coupon(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- UNIVERSAL ADMIN PANEL ---
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # 🛑 SECURITY CHECK
+    # যদি ইউজার ADMIN_ID না হয়, তাকে কিছুই দেখাবে না বা বের করে দিবে
+    if user_id != ADMIN_ID:
+        try:
+            await update.message.reply_text("❌ **Access Denied!**\nYou are not authorized.")
+        except:
+            pass # যদি মেসেজ দিতে না পারে
+        return MAIN_STATE
+
+    # ✅ FIX: বাটনগুলো বাম দিকে (Left) চাপানো হয়েছে
     kb = [
         # সারি ১: স্টক এবং সেলস রিপোর্ট
         [InlineKeyboardButton("📦 Stock Report", callback_data='adm_stock'), InlineKeyboardButton("📈 Sales Report", callback_data='adm_sales')],
         # সারি ২: প্রোডাক্ট অ্যাড এবং ডিলিট
         [InlineKeyboardButton("➕ Add Product", callback_data='adm_add'), InlineKeyboardButton("❌ Delete Product", callback_data='adm_del')],
-        # সারি ৩: ইউজার ব্যালেন্স এবং রিসেলার লিস্ট (নতুন)
+        # সারি ৩: ইউজার ব্যালেন্স এবং রিসেলার লিস্ট
         [InlineKeyboardButton("👥 Users & Balance", callback_data='adm_users'), InlineKeyboardButton("🔐 Reseller List", callback_data='adm_res_list')],
         # সারি ৪: রিসেলার তৈরি এবং কুপন
         [InlineKeyboardButton("➕ Add Reseller", callback_data='adm_add_res'), InlineKeyboardButton("🎟 Add Coupon", callback_data='adm_coupon')],
@@ -803,17 +815,25 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data='menu_main')]
     ]
     
-    # মেসেজ এডিট অথবা সেন্ড (সেফটি সহ - যাতে ক্র্যাশ না করে)
+    # মেসেজ এডিট অথবা সেন্ড
     try:
         if update.callback_query:
+            # বাটন থেকে আসলে লোডিং বন্ধ করবে
+            await update.callback_query.answer()
             await update.callback_query.edit_message_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         else:
+            # কমান্ড (/admin) দিলে নতুন মেসেজ
             await update.message.reply_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    except:
+    except Exception as e:
+        print(f"Admin Panel Error: {e}")
         # যদি এডিট করতে না পারে, নতুন করে পাঠাবে
-        await update.effective_message.reply_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        try:
+            await update.effective_message.reply_text("👑 **Admin Panel**\nঅপশন সিলেক্ট করুন:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        except:
+            pass
         
     return MAIN_STATE
+    
     
 
 async def universal_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
